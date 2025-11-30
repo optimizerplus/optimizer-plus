@@ -206,6 +206,5 @@ MIT © [Derfog](https://github.com/Derfogd)
 
 <p align="center">
   <a href="https://optimizerplus.github.io">🌐 Website</a> •
-  <a href="https://github.com/optimizerplus">📦 GitHub</a> •
   <a href="https://boosteroid.com/go/b/fA5oF">🎮 Boosteroid</a>
 </p>
