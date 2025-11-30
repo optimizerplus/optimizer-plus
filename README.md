@@ -4,6 +4,7 @@
 
 [![Install](https://img.shields.io/badge/Install-Tampermonkey-green?style=for-the-badge&logo=tampermonkey)](https://raw.githubusercontent.com/optimizerplus/optimizer-plus-v3.7.2/main/Boosteroid-Optimizer-Plus.user.js)
 [![Website](https://img.shields.io/badge/Website-optimizerplus.github.io-blue?style=for-the-badge)](https://optimizerplus.github.io)
+[![Boosteroid](https://img.shields.io/badge/Boosteroid-Cloud%20Gaming-orange?style=for-the-badge&logo=cloud)](https://boosteroid.com/go/b/fA5oF)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 ---
@@ -187,7 +188,13 @@
 
 - **Browser**: Chrome, Firefox, Edge, Opera, Brave
 - **Extension**: [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/)
-- **Account**: [Boosteroid](https://boosteroid.com) subscription
+- **Account**: [Boosteroid](https://boosteroid.com/go/b/fA5oF) subscription
+
+---
+
+## 🎮 Don't have Boosteroid yet? | Pas encore Boosteroid ?
+
+**[👉 Sign up for Boosteroid | Inscrivez-vous à Boosteroid](https://boosteroid.com/go/b/fA5oF)**
 
 ---
 
@@ -199,5 +206,6 @@ MIT © [Derfog](https://github.com/Derfogd)
 
 <p align="center">
   <a href="https://optimizerplus.github.io">🌐 Website</a> •
-  <a href="https://github.com/optimizerplus">📦 GitHub</a>
+  <a href="https://github.com/optimizerplus">📦 GitHub</a> •
+  <a href="https://boosteroid.com/go/b/fA5oF">🎮 Boosteroid</a>
 </p>
