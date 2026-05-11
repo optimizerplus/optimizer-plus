@@ -1,4 +1,4 @@
-# ⚡ Boosteroid Optimizer Plus v3.7.2
+#  Boosteroid Optimizer Plus
 
 **Enhance your Boosteroid cloud gaming experience with 4K resolution, upscaling, and video filters.**
 
