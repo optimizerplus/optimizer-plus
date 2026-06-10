@@ -1140,6 +1140,28 @@
     // v3.6.4: Suppression de l'exposition globale pour raisons de sécurité (SEC-01)
     // UltrawideSupport reste accessible uniquement dans le scope de l'IIFE
 
+    // =======================================================================
+    // Security helpers (XSS + prototype pollution hardening)
+    // =======================================================================
+    const BLOCKED_MERGE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+    function isPlainObject(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => {
+            switch (char) {
+                case '&': return '&amp;';
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '"': return '&quot;';
+                case '\'': return '&#39;';
+                default: return char;
+            }
+        });
+    }
+
     // ===============================================================================
     // v3.7.1 SMART RESOLUTION DETECTOR - Auto-détection écran et résolutions adaptées
     // UPSCALE ONLY: Ne propose que des résolutions >= native
@@ -1635,7 +1657,7 @@
          */
         generateResolutionOptionsHTML(currentWidth, currentHeight, isAutoMode = false) {
             const analysis = this.getScreenAnalysis();
-            const { screen, resolutions } = analysis;
+            const { screen } = analysis;
             const detectedRatio = this.getClosestRatioGroup(screen.ratio);
 
             let html = '';
@@ -1646,15 +1668,15 @@
             const isAutoSelected = isAutoMode || !currentWidth || currentWidth === 'auto';
             html += `<optgroup label="[AUTO]">`;
             html += `<option value="auto" ${isAutoSelected ? 'selected' : ''}>`;
-            html += `Auto -> ${nativeRes.w}x${nativeRes.h} (Native)`;
+            html += `Auto -> ${escapeHtml(nativeRes.w)}x${escapeHtml(nativeRes.h)} (Native)`;
             html += `</option>`;
             html += `</optgroup>`;
 
             // Résolution Native de l'écran
-            html += `<optgroup label="Native (${screen.width}x${screen.height})">`;
+            html += `<optgroup label="Native (${escapeHtml(screen.width)}x${escapeHtml(screen.height)})">`;
             const isNativeSelected = !isAutoSelected && currentWidth === screen.width && currentHeight === screen.height;
-            html += `<option value="${screen.width}x${screen.height}" ${isNativeSelected ? 'selected' : ''}>`;
-            html += `${screen.width}x${screen.height} (Native)`;
+            html += `<option value="${escapeHtml(`${screen.width}x${screen.height}`)}" ${isNativeSelected ? 'selected' : ''}>`;
+            html += `${escapeHtml(screen.width)}x${escapeHtml(screen.height)} (Native)`;
             html += `</option>`;
             html += `</optgroup>`;
 
@@ -1675,19 +1697,19 @@
 
                 // Marquer le ratio détecté de l'écran
                 const isDetected = ratio === detectedRatio ? ' [OK]' : '';
-                html += `<optgroup label="${label}${isDetected}">`;
+                html += `<optgroup label="${escapeHtml(`${label}${isDetected}`)}">`;
 
                 gamingRes.forEach(res => {
                     const isSelected = currentWidth === res.w && currentHeight === res.h;
-                    html += `<option value="${res.w}x${res.h}" ${isSelected ? 'selected' : ''}>`;
-                    html += `${res.w}x${res.h}`;
+                    const optionValue = `${res.w}x${res.h}`;
+                    let optionLabel = optionValue;
 
                     // Ajouter des labels connus si nécessaire
-                    if (res.w === 3840 && res.h === 2160) html += ' (4K)';
-                    if (res.w === 2560 && res.h === 1440) html += ' (1440p)';
-                    if (res.w === 1920 && res.h === 1080) html += ' (1080p)';
+                    if (res.w === 3840 && res.h === 2160) optionLabel += ' (4K)';
+                    if (res.w === 2560 && res.h === 1440) optionLabel += ' (1440p)';
+                    if (res.w === 1920 && res.h === 1080) optionLabel += ' (1080p)';
 
-                    html += `</option>`;
+                    html += `<option value="${escapeHtml(optionValue)}" ${isSelected ? 'selected' : ''}>${escapeHtml(optionLabel)}</option>`;
                 });
 
                 html += `</optgroup>`;
@@ -3726,12 +3748,17 @@
         }
         // v3.9.0: Remplacer Object.assign par un merge profond pour ne pas écraser les nouvelles clés par défaut
         function deepMerge(target, source) {
-            for (const key in source) {
-                if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-                    if (!target[key]) target[key] = {};
-                    deepMerge(target[key], source[key]);
+            if (!isPlainObject(target) || !isPlainObject(source)) return;
+
+            for (const key of Object.keys(source)) {
+                if (BLOCKED_MERGE_KEYS.has(key)) continue;
+
+                const sourceValue = source[key];
+                if (isPlainObject(sourceValue)) {
+                    if (!isPlainObject(target[key])) target[key] = {};
+                    deepMerge(target[key], sourceValue);
                 } else {
-                    target[key] = source[key];
+                    target[key] = sourceValue;
                 }
             }
         }
@@ -6018,10 +6045,11 @@
 
         // Déterminer si on est sur un écran ultrawide
         const isUltrawideScreen = (window.innerWidth / window.innerHeight) > 1.9;
+        const sectionScreenAnalysis = SmartResolutionDetector.getScreenAnalysis();
 
         section.innerHTML = `
             <div class="menu_title" style="margin-top: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
-                <span>${t('title')} <span class="optimizer-badge">v3.9.0</span> <span style="font-size: 11px; color: #9b99ad; font-weight: normal;">by Derfog</span></span>
+                <span>${escapeHtml(t('title'))} <span class="optimizer-badge">v3.9.0</span> <span style="font-size: 11px; color: #9b99ad; font-weight: normal;">by Derfog</span></span>
                 <select class="optimizer-select" id="optimizer-lang-select" style="width: auto; min-width: 65px; max-width: 90px; padding: 4px 6px; font-size: 11px; flex-shrink: 0;">
                     <option value="auto" ${CONFIG.language === 'auto' ? 'selected' : ''}>Auto</option>
                     <option value="en" ${CONFIG.language === 'en' ? 'selected' : ''}>EN</option>
@@ -6046,7 +6074,7 @@
             <div class="menu_switch_block top_20">
                 <div class="menu_title_group">
                     <div class="optimizer-status-dot" id="optimizer-status-dot"></div>
-                    <span style="margin-left: 6px;">${t('active')} - <span id="optimizer-resolution">${CONFIG.resolution.width}x${CONFIG.resolution.height}</span></span>
+                    <span style="margin-left: 6px;">${escapeHtml(t('active'))} - <span id="optimizer-resolution">${escapeHtml(CONFIG.resolution.width)}x${escapeHtml(CONFIG.resolution.height)}</span></span>
                 </div>
                 <span class="optimizer-hw-badge">${ICONS.cpu}</span>
             </div>
@@ -6054,15 +6082,15 @@
             <!-- Info écran détecté -->
             <div class="optimizer-screen-info">
                 ${ICONS.monitor}
-                <span class="screen-detected">${SmartResolutionDetector.getScreenAnalysis().screen.width}x${SmartResolutionDetector.getScreenAnalysis().screen.height}</span>
-                <span class="screen-ratio">${SmartResolutionDetector.getScreenAnalysis().screen.ratioType}</span>
+                <span class="screen-detected">${escapeHtml(sectionScreenAnalysis.screen.width)}x${escapeHtml(sectionScreenAnalysis.screen.height)}</span>
+                <span class="screen-ratio">${escapeHtml(sectionScreenAnalysis.screen.ratioType)}</span>
             </div>
 
             <!-- Sélecteur de Résolution v3.6.3 - Auto-détection intelligente -->
-            <div class="menu_title">${t('targetResolution')}</div>
+            <div class="menu_title">${escapeHtml(t('targetResolution'))}</div>
             <div class="menu_switch_block top_20">
                 <div class="menu_title_group">
-                    ${ICONS.monitor} <span>${t('resolution')}</span>
+                    ${ICONS.monitor} <span>${escapeHtml(t('resolution'))}</span>
                 </div>
                 <select class="optimizer-select" id="optimizer-res-select">
                     ${SmartResolutionDetector.generateResolutionOptionsHTML(CONFIG.resolution.width, CONFIG.resolution.height, CONFIG.resolution.isAuto)}
@@ -6070,10 +6098,10 @@
             </div>
 
             <!-- Video Enhancer - Simplifié -->
-            <div class="menu_title">${t('videoEnhancement')}</div>
+            <div class="menu_title">${escapeHtml(t('videoEnhancement'))}</div>
             <div class="menu_switch_block top_20">
                 <div class="menu_title_group">
-                    <p>${t('enableEnhancer')}</p>
+                    <p>${escapeHtml(t('enableEnhancer'))}</p>
                 </div>
                 <label class="switch">
                     <input type="checkbox" id="optimizer-enhancer" ${CONFIG.enhancer.enabled ? 'checked' : ''}>
@@ -6081,37 +6109,37 @@
                 </label>
             </div>
             <div class="menu_switch_block top_20">
-                <div class="menu_title_group"><p>${t('sharpness')}</p></div>
+                <div class="menu_title_group"><p>${escapeHtml(t('sharpness'))}</p></div>
                 <div class="menu_title_group" id="optimizer-sharp-value">${Math.round(CONFIG.enhancer.sharpness * 100)}%</div>
                 <input type="range" id="optimizer-sharpness" name="sharpness" min="0" max="100" value="${CONFIG.enhancer.sharpness * 100}">
             </div>
             <div class="menu_switch_block top_20">
-                <div class="menu_title_group"><p>${t('contrast')}</p></div>
+                <div class="menu_title_group"><p>${escapeHtml(t('contrast'))}</p></div>
                 <div class="menu_title_group" id="optimizer-contrast-value">${Math.round(CONFIG.enhancer.contrast * 100)}%</div>
                 <input type="range" id="optimizer-contrast" name="contrast" min="80" max="120" value="${CONFIG.enhancer.contrast * 100}">
             </div>
             <div class="menu_switch_block top_20">
-                <div class="menu_title_group"><p>${t('saturation')}</p></div>
+                <div class="menu_title_group"><p>${escapeHtml(t('saturation'))}</p></div>
                 <div class="menu_title_group" id="optimizer-sat-value">${Math.round(CONFIG.enhancer.saturation * 100)}%</div>
                 <input type="range" id="optimizer-saturation" name="saturation" min="80" max="120" value="${CONFIG.enhancer.saturation * 100}">
             </div>
 
             <!-- PRÉSETS - Section principale simplifiée -->
-            <div class="menu_title">${t('quickPresets')}</div>
+            <div class="menu_title">${escapeHtml(t('quickPresets'))}</div>
             <div class="menu_switch_block top_20" style="flex-direction: column; align-items: flex-start;">
                 <div class="optimizer-presets" id="optimizer-presets">
                     <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'perfect' ? 'active' : ''}" data-preset="perfect">${ICONS.sparkles} Perfect</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'default' ? 'active' : ''}" data-preset="default">${ICONS.target} ${t('presetDefault')}</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'cinematic' ? 'active' : ''}" data-preset="cinematic">${ICONS.film} ${t('presetCinematic')}</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'game' ? 'active' : ''}" data-preset="game">${ICONS.crosshair} ${t('presetGame')}</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'comfort' ? 'active' : ''}" data-preset="comfort">${ICONS.eye} ${t('presetComfort')}</button>
+                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'default' ? 'active' : ''}" data-preset="default">${ICONS.target} ${escapeHtml(t('presetDefault'))}</button>
+                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'cinematic' ? 'active' : ''}" data-preset="cinematic">${ICONS.film} ${escapeHtml(t('presetCinematic'))}</button>
+                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'game' ? 'active' : ''}" data-preset="game">${ICONS.crosshair} ${escapeHtml(t('presetGame'))}</button>
+                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'comfort' ? 'active' : ''}" data-preset="comfort">${ICONS.eye} ${escapeHtml(t('presetComfort'))}</button>
                 </div>
             </div>
 
             <!-- Toggle filtres avancés (collapsed par défaut) -->
             <div class="menu_switch_block top_20">
                 <div class="menu_title_group">
-                    <p>${t('advancedFilters')}</p>
+                    <p>${escapeHtml(t('advancedFilters'))}</p>
                 </div>
                 <label class="switch">
                     <input type="checkbox" id="optimizer-filters-toggle" ${CONFIG.filters.enabled ? 'checked' : ''}>
@@ -6155,7 +6183,7 @@
             <!-- Mode Performance -->
             <div class="menu_switch_block top_20" style="margin-top: 15px;">
                 <div class="menu_title_group">
-                    ${ICONS.zap} <span style="margin-left: 4px;">${t('performanceMode') || 'Performance'}</span>
+                    ${ICONS.zap} <span style="margin-left: 4px;">${escapeHtml(t('performanceMode') || 'Performance')}</span>
                 </div>
                 <label class="switch">
                     <input type="checkbox" id="optimizer-performance-mode" ${CONFIG.display?.performanceMode ? 'checked' : ''}>
@@ -6166,7 +6194,7 @@
             <!-- Stretch Mode (No Borders) -->
             <div class="menu_switch_block top_20" style="margin-top: 15px;">
                 <div class="menu_title_group">
-                    ${ICONS.monitor} <span style="margin-left: 4px;">${t('stretchMode')}</span>
+                    ${ICONS.monitor} <span style="margin-left: 4px;">${escapeHtml(t('stretchMode'))}</span>
                 </div>
                 <label class="switch">
                     <input type="checkbox" id="optimizer-stretch-mode">
@@ -6184,7 +6212,7 @@
             <!-- Reset -->
             <div class="menu_switch_block top_20" style="margin-top: 15px;">
                 <button class="optimizer-btn secondary" id="optimizer-reset" style="width: 100%;">
-                    ${ICONS.refresh} ${t('reset')}
+                    ${ICONS.refresh} ${escapeHtml(t('reset'))}
                 </button>
             </div>
         `;
@@ -6938,6 +6966,12 @@
             const currentResText = CONFIG.resolution.isAuto
                 ? `Auto: ${CONFIG.resolution.width}x${CONFIG.resolution.height}`
                 : `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
+            const safeCurrentResText = escapeHtml(currentResText);
+            const safeScreenWidth = escapeHtml(screenAnalysis.screen.width);
+            const safeScreenHeight = escapeHtml(screenAnalysis.screen.height);
+            const safeScreenRatioType = escapeHtml(screenAnalysis.screen.ratioType);
+            const safeScreenRatioName = escapeHtml(screenAnalysis.screen.ratioName);
+            const hardwareTier = ENV_PROFILE.isHighEnd ? 'High-End' : (ENV_PROFILE.isMidRange ? 'Mid-Range' : 'Low-End');
 
             widget.innerHTML = `
                 <!-- Bouton principal -->
@@ -6945,7 +6979,7 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:28px;height:28px;color:white;">
                         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                     </svg>
-                    <div class="opt-status-dot" title="Active: ${currentResText}" style="position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;"></div>
+                    <div class="opt-status-dot" title="Active: ${safeCurrentResText}" style="position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;"></div>
                 </button>
 
                 <!-- Panel déroulant -->
@@ -6962,15 +6996,15 @@
                     <div class="opt-widget-screen-info">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0;"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                         <span class="opt-screen-label">Screen:</span>
-                        <span class="opt-screen-value">${screenAnalysis.screen.width}x${screenAnalysis.screen.height}</span>
-                        <span class="opt-screen-ratio">${screenAnalysis.screen.ratioType} ${screenAnalysis.screen.ratioName}</span>
+                        <span class="opt-screen-value">${safeScreenWidth}x${safeScreenHeight}</span>
+                        <span class="opt-screen-ratio">${safeScreenRatioType} ${safeScreenRatioName}</span>
                     </div>
 
                     <!-- Status actuel -->
                     <div class="opt-widget-status">
                         <div class="opt-widget-status-dot"></div>
                         <span class="opt-widget-status-text" id="opt-widget-status-text">
-                            ${currentResText}
+                            ${safeCurrentResText}
                         </span>
                     </div>
 
@@ -7002,7 +7036,7 @@
 
                     <!-- Footer -->
                     <div class="opt-widget-footer" style="color:rgba(255,255,255,0.4);text-align:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);">
-                        <span class="opt-widget-credit" style="font-size:10px;">by Derfog - ${ENV_PROFILE.isHighEnd ? ' High-End' : (ENV_PROFILE.isMidRange ? ' Mid-Range' : ' Low-End')}</span>
+                        <span class="opt-widget-credit" style="font-size:10px;">by Derfog - ${escapeHtml(hardwareTier)}</span>
                     </div>
                 </div>
             `;
