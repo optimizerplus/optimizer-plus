@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name                Boosteroid Optimizer Plus
 // @namespace           https://github.com/Derfogd
-// @version             6.1.1
+// @version             6.1.1.1
 // @description         Advanced optimizations for Boosteroid: 4K resolution, AV1/HEVC codec, tuned bitrate, WebGPU zero-copy upscaling
 // @description:fr      Optimisations avancées pour Boosteroid : résolution 4K/8K, codec AV1/HEVC, bitrate optimisé, WebGPU zéro copie
 // @author              Derfog
@@ -39,7 +39,8 @@
         error: _realConsole.error.bind(_realConsole)
     };
 
-    // Single source of truth for the version; keep in sync with @version.
+    // Version shown in the menu. @version may carry an extra digit: Tampermonkey only
+    // updates to a higher @version, and a fix shipped under the same name still needs one.
     const SCRIPT_VERSION = '6.1.1';
 
     // ENVIRONMENT DETECTION & PROFILING
@@ -157,12 +158,7 @@
         resolution: {
             width: 3840,
             height: 2160,
-            pixelRatio: 2,
             isAuto: true
-        },
-
-        codecs: {
-            forceHEVC: true,
         },
 
         streaming: {
@@ -197,13 +193,6 @@
             deband: { enabled: false, strength: 0.3 }
         },
 
-        drm: {
-            forceDolbyVision: false,
-            forceHDCP: false,
-            forceUHD: true,
-            forceALL: false
-        },
-
         display: {
             stretchMode: false,         // Stretch the video to remove black bars
         },
@@ -216,8 +205,6 @@
     const _realScreen = {
         width: window.screen?.width || 1920,
         height: window.screen?.height || 1080,
-        availWidth: window.screen?.availWidth || 1920,
-        availHeight: window.screen?.availHeight || 1080,
         pixelRatio: window.devicePixelRatio || 1
     };
 
@@ -251,7 +238,7 @@
     // Defaults used by the Reset button and at the start of each game session: advanced
     // filters off. (Reset used to turn them on with USM and CAS at full strength.)
     const DEFAULT_CONFIG = {
-        resolution: { width: 3840, height: 2160, pixelRatio: 2, isAuto: true },
+        resolution: { width: 3840, height: 2160, isAuto: true },
         enhancer: { enabled: true, sharpness: 0.45, contrast: 1.08, saturation: 1.05, brightness: 1.02 },
         filters: {
             enabled: false, preset: null, performanceMode: true,
@@ -276,7 +263,7 @@
         // Network API false positives must not downgrade high-end desktops
         if (envProfile.isLowEnd || (envProfile.isSlowNetwork && !envProfile.isHighEnd)) {
             console.log('[Optimizer+] Adapting to Low-End/Slow profile');
-            cfg.resolution = { width: 1920, height: 1080, pixelRatio: 1, isAuto: true };
+            cfg.resolution = { width: 1920, height: 1080, isAuto: true };
             cfg.streaming = {
                 maxBitrate: 100000000,
             };
@@ -290,7 +277,7 @@
         // Tier 2 : Mid-Range
         else if (envProfile.isMidRange) {
             console.log('[Optimizer+] Adapting to Mid-Range profile');
-            cfg.resolution = { width: 2560, height: 1440, pixelRatio: 1, isAuto: false };
+            cfg.resolution = { width: 2560, height: 1440, isAuto: false };
             cfg.streaming = {
                 maxBitrate: 100000000,
             };
@@ -363,15 +350,7 @@
                 height = windowH;
             }
 
-            return {
-                width: width,
-                height: height,
-                availWidth: _realScreen.availWidth,
-                availHeight: _realScreen.availHeight,
-                devicePixelRatio: _realScreen.pixelRatio,
-                isMultiMonitor: false,
-                screenLabel: 'Default'
-            };
+            return { width, height };
         },
 
         detectAspectRatio() {
@@ -422,12 +401,10 @@
 
             return {
                 ratio: ratio,
-                ratioExact: ratio.toFixed(4),
                 ratioType,
                 ratioName,
                 width: screen.width,
-                height: screen.height,
-                isUltrawide: ratio >= 2.0,
+                height: screen.height
             };
         },
 
@@ -497,6 +474,28 @@
             ]
         },
 
+        // Resolutions whitelisted by the Boosteroid server
+        SUPPORTED_RESOLUTIONS: [
+            // 4:3
+            [800, 600], [1024, 768], [1152, 864], [1280, 960], [1400, 1050],
+            [1440, 1152], [1600, 1200], [1800, 1350], [1920, 1536], [2048, 1536],
+            // 5:4
+            [1280, 1024], [1600, 1024], [2560, 2048],
+            // 16:9
+            [1280, 720], [1360, 768], [1366, 768], [1600, 900], [1920, 1080],
+            [2048, 1152], [2560, 1440], [3200, 1440], [3200, 1800], [3840, 2160],
+            // 16:10
+            [1280, 800], [1440, 900], [1680, 1050], [1920, 1200], [2048, 1152],
+            [2048, 1330], [2160, 1350], [2560, 1600], [2732, 2048], [2940, 1912],
+            [3320, 2160], [3360, 2100],
+            // 21:9
+            [1600, 720], [1920, 864], [2400, 1080], [2560, 1080], [3440, 1440],
+            // 2.37:1
+            [1920, 810],
+            // 32:9
+            [3840, 1080]
+        ],
+
         getClosestRatioGroup(screenRatio) {
             const ratioGroups = {
                 '4:3': 1.333,
@@ -522,135 +521,6 @@
             return closest;
         },
 
-        // Resolutions whitelisted by the Boosteroid server
-        SUPPORTED_RESOLUTIONS: [
-            // 4:3
-            [800, 600], [1024, 768], [1152, 864], [1280, 960], [1400, 1050],
-            [1440, 1152], [1600, 1200], [1800, 1350], [1920, 1536], [2048, 1536],
-            // 5:4
-            [1280, 1024], [1600, 1024], [2560, 2048],
-            // 16:9
-            [1280, 720], [1360, 768], [1366, 768], [1600, 900], [1920, 1080],
-            [2048, 1152], [2560, 1440], [3200, 1440], [3200, 1800], [3840, 2160],
-            // 16:10
-            [1280, 800], [1440, 900], [1680, 1050], [1920, 1200], [2048, 1152],
-            [2048, 1330], [2160, 1350], [2560, 1600], [2732, 2048], [2940, 1912],
-            [3320, 2160], [3360, 2100],
-            // 21:9
-            [1600, 720], [1920, 864], [2400, 1080], [2560, 1080], [3440, 1440],
-            // 2.37:1
-            [1920, 810],
-            // 32:9
-            [3840, 1080]
-        ],
-
-        isResolutionSupported(width, height) {
-            return this.SUPPORTED_RESOLUTIONS.some(([w, h]) => w === width && h === height);
-        },
-
-        findBestMatch(screenWidth, screenHeight) {
-            const screenRatio = screenWidth / screenHeight;
-            const screenPixels = screenWidth * screenHeight;
-            let bestMatch = null;
-            let bestScore = Infinity;
-
-            for (const [w, h] of this.SUPPORTED_RESOLUTIONS) {
-                const resRatio = w / h;
-                const resPixels = w * h;
-                // Score = ratio gap (weighted x10) + normalised pixel gap
-                const ratioDiff = Math.abs(resRatio - screenRatio) * 10;
-                const pixelDiff = Math.abs(resPixels - screenPixels) / screenPixels;
-                const score = ratioDiff + pixelDiff;
-
-                // Prefer resolutions >= native (upscale)
-                const isUpscale = resPixels >= screenPixels * 0.95;
-                const adjustedScore = isUpscale ? score : score + 5; // Penalise downscaling
-
-                if (adjustedScore < bestScore) {
-                    bestScore = adjustedScore;
-                    bestMatch = { w, h, score: adjustedScore, ratioDiff, isUpscale };
-                }
-            }
-            return bestMatch;
-        },
-
-        getSelectableResolutions(screenWidth, screenHeight) {
-            const screenRatio = screenWidth / screenHeight;
-            const ratioGroup = this.getClosestRatioGroup(screenRatio);
-            const screenPixels = screenWidth * screenHeight;
-
-            const resolutions = [];
-            const seen = new Set();
-
-            resolutions.push({
-                w: screenWidth,
-                h: screenHeight,
-                label: 'Native',
-                tier: 'native',
-                isNative: true,
-                ratioGroup: ratioGroup
-            });
-            seen.add(`${screenWidth}x${screenHeight}`);
-
-            const scored = [];
-            for (const [w, h] of this.SUPPORTED_RESOLUTIONS) {
-                const key = `${w}x${h}`;
-                if (seen.has(key)) continue;
-                // Skip resolutions within 8 px of native (codec rounding)
-                if (Math.abs(w - screenWidth) <= 8 && Math.abs(h - screenHeight) <= 8) continue;
-
-                const resRatio = w / h;
-                const ratioDiff = Math.abs(resRatio - screenRatio);
-                const resPixels = w * h;
-                const isUpscale = resPixels >= screenPixels * 0.95;
-
-                scored.push({ w, h, ratioDiff, isUpscale, pixels: resPixels });
-                seen.add(key);
-            }
-
-            scored.sort((a, b) => {
-                const aClose = a.ratioDiff < 0.15 ? 0 : 1;
-                const bClose = b.ratioDiff < 0.15 ? 0 : 1;
-                if (aClose !== bClose) return aClose - bClose;
-                return a.pixels - b.pixels;
-            });
-
-            scored.forEach(res => {
-                resolutions.push({
-                    w: res.w,
-                    h: res.h,
-                    tier: res.w >= 3840 ? 'ultra' : (res.w >= 2560 ? 'mid' : 'low'),
-                    isNative: false,
-                    ratioGroup: this.getClosestRatioGroup(res.w / res.h),
-                    isSupported: true,
-                    ratioDiff: res.ratioDiff
-                });
-            });
-
-            // Recommended = smallest upscale with a near-identical ratio (< 5% gap)
-            const recommended = resolutions.find(r =>
-                !r.isNative &&
-                (r.w * r.h) >= screenPixels * 0.95 &&
-                r.ratioDiff !== undefined && r.ratioDiff < 0.05
-            ) || resolutions.find(r =>
-                !r.isNative &&
-                (r.w * r.h) >= screenPixels * 0.95
-            );
-
-            if (recommended) {
-                recommended.isRecommended = true;
-            } else if (resolutions.length > 0) {
-                resolutions[0].isRecommended = true;
-            }
-
-            return resolutions;
-        },
-
-        generateUpscaleResolutions(screenInfo) {
-            const { width, height } = screenInfo;
-            return this.getSelectableResolutions(width, height);
-        },
-
         getScreenAnalysis() {
             const now = Date.now();
             if (this._cache && (now - this._cacheTime) < this.CACHE_TTL) {
@@ -658,19 +528,9 @@
             }
 
             const screenInfo = this.detectAspectRatio();
-            const upscaleOptions = this.generateUpscaleResolutions(screenInfo);
-
-            let recommended = upscaleOptions.find(r => r.isRecommended);
-            if (!recommended) {
-                recommended = upscaleOptions.find(r => r.isNative) || upscaleOptions[0];
-            }
-
             const result = {
                 screen: screenInfo,
-                resolutions: upscaleOptions,
-                recommended: recommended,
-                native: upscaleOptions.find(r => r.isNative),
-                summary: `${screenInfo.width}x${screenInfo.height} (${screenInfo.ratioType} - ratio ${screenInfo.ratioExact})`
+                native: { w: screenInfo.width, h: screenInfo.height }
             };
 
             this._cache = result;
@@ -735,74 +595,7 @@
 
             return html;
         },
-
-        setResolutionSafely(newWidth, newHeight, label = '') {
-
-            const isSupported = this.isResolutionSupported(newWidth, newHeight);
-
-            if (!isSupported) {
-                console.warn(`[Optimizer+] [!] R\u00E9solution ${newWidth}x${newHeight} non dans la whitelist serveur`);
-                // Applied anyway; the stream check below reverts it if the server refuses
-            }
-
-            CONFIG.resolution.width = newWidth;
-            CONFIG.resolution.height = newHeight;
-            CONFIG.resolution.pixelRatio = newWidth >= 3840 ? 2 : (newWidth >= 2560 ? 1.5 : 1);
-
-            console.log(`[Optimizer+] R\u00E9solution demand\u00E9e: ${newWidth}x${newHeight} ${label ? `(${label})` : ''}`);
-
-            // Validate against the real stream once it has settled
-            setTimeout(() => {
-                const video = document.querySelector('video');
-                if (video && video.videoWidth && video.videoHeight) {
-                    const actualWidth = video.videoWidth;
-                    const actualHeight = video.videoHeight;
-                    const tolerance = 0.9;
-
-                    if (actualWidth < newWidth * tolerance || actualHeight < newHeight * tolerance) {
-                        console.warn(`[Optimizer+] [!] R\u00E9solution ${newWidth}x${newHeight} refus\u00E9e par Boosteroid`);
-                        console.warn(`[Optimizer+] Fallback r\u00E9el: ${actualWidth}x${actualHeight}`);
-
-                        CONFIG.resolution.width = actualWidth;
-                        CONFIG.resolution.height = actualHeight;
-
-                        if (typeof showNotification === 'function') {
-                            showNotification(`[!] R\u00E9solution refus\u00E9e -> ${actualWidth}x${actualHeight}`);
-                        }
-                    } else {
-                        console.log(`[Optimizer+] [OK] R\u00E9solution ${newWidth}x${newHeight} confirm\u00E9e par le stream`);
-                    }
-                }
-            }, 2500);
-
-            return {
-                requested: { width: newWidth, height: newHeight },
-                isSupported: isSupported,
-                label: label
-            };
-        },
-
-        applyAutoResolution() {
-            const screen = this.getScreenDimensions();
-            const screenW = screen.width;
-            const screenH = screen.height;
-
-            const bestMatch = this.findBestMatch(screenW, screenH);
-
-            if (bestMatch) {
-                const label = `Auto (${bestMatch.w}x${bestMatch.h})`;
-                this.setResolutionSafely(bestMatch.w, bestMatch.h, label);
-                console.log(`[Optimizer+] Auto-r\u00E9solution: \u00E9cran ${screenW}x${screenH} \u2192 Boosteroid ${bestMatch.w}x${bestMatch.h} (ratio diff: ${bestMatch.ratioDiff.toFixed(4)})`);
-                return { w: bestMatch.w, h: bestMatch.h, label: label };
-            }
-
-            this.setResolutionSafely(screenW, screenH, 'Native (fallback)');
-            console.log(`[Optimizer+] Auto-r\u00E9solution (native fallback): ${screenW}x${screenH}`);
-            return { w: screenW, h: screenH, label: 'Native' };
-        },
     };
-
-    console.log('[Optimizer+] Smart Resolution Detector:', SmartResolutionDetector.getScreenAnalysis().summary);
 
     // SMART CODEC SELECTOR - Pick the best hardware-decoded codec
 
@@ -920,12 +713,8 @@
 
         translations: {
             en: {
-                title: 'Optimizer Plus',
-                status: 'Status',
                 active: 'Active',
-                inactive: 'Inactive',
                 resolution: 'Resolution',
-                forcedResolution: 'Forced Resolution',
                 targetResolution: 'Target Resolution',
                 videoEnhancement: 'Video Enhancement',
                 enableEnhancer: 'Enable Enhancer',
@@ -950,38 +739,20 @@
                 presetComfort: 'Comfort',
                 presetPerfect: 'Perfect Quality',
                 presetCustom: 'Custom',
-                noiseReduction: 'Noise Reduction',
                 vibrance: 'Vibrance',
                 clarity: 'Clarity',
                 apply: 'Apply',
+                reload: 'Reload',
                 reset: 'Reset',
-                settingsSaved: '[OK] Settings saved!',
                 settingsReset: '[<<] Settings reset to defaults.',
                 presetApplied: '[*] Preset "{name}" applied!',
                 language: 'Language',
-                autoDetect: 'Auto-detect',
-                deviceProfile: 'Device',
-                filterTier: 'Quality Tier',
-                adaptiveMode: 'Adaptive Mode',
-                streamInterceptor: 'Stream Interceptor (HW Decode)',
-                bitrateEnforcer: 'Aggressive Bitrate Forcer (V4)',
-                ultrawideMode: 'Ultrawide Mode (21:9, 32:9)',
-                ultrawideAutoDetect: 'Auto-detect 21:9+',
                 performanceMode: 'Performance Mode',
-                performanceModeHint: 'Disables heavy filters to maximize FPS',
-                displaySettings: 'Display & Ultrawide',
-                screenInfo: 'Screen Info',
-                fitMode: 'Display Mode',
-                hwProfile: 'Profile',
                 stretchMode: 'Stretch to Fill (No Borders)'
             },
             fr: {
-                title: 'Optimizer Plus',
-                status: 'Status',
                 active: 'Actif',
-                inactive: 'Inactif',
                 resolution: 'Résolution',
-                forcedResolution: 'Résolution forcée',
                 targetResolution: 'Résolution cible',
                 videoEnhancement: 'Amélioration vidéo',
                 enableEnhancer: 'Activer l\'enhancer',
@@ -1006,35 +777,20 @@
                 presetComfort: 'Confort',
                 presetPerfect: 'Qualité Parfaite',
                 presetCustom: 'Personnalisé',
-                noiseReduction: 'Réduction de bruit',
                 vibrance: 'Vibrance',
                 clarity: 'Clarté',
                 apply: 'Appliquer',
+                reload: 'Recharger',
                 reset: 'Reset',
-                settingsSaved: '[OK] Paramètres sauvegardés!',
                 settingsReset: '[<<] Paramètres réinitialisés.',
                 presetApplied: '[*] Préset "{name}" appliqué!',
                 language: 'Langue',
-                autoDetect: 'Auto-détection',
-                streamInterceptor: 'Interception Stream (Déco. HW)',
-                bitrateEnforcer: 'Forçage Bitrate Agressif (V4)',
-                ultrawideMode: 'Mode Ultrawide (21:9, 32:9)',
-                ultrawideAutoDetect: 'Auto-détection 21:9+',
                 performanceMode: 'Mode Performance',
-                performanceModeHint: 'Désactive les filtres lourds pour maximiser les FPS',
-                displaySettings: 'Affichage & Ultrawide',
-                screenInfo: 'Info écran',
-                fitMode: 'Mode d\'affichage',
-                hwProfile: 'Profil',
                 stretchMode: 'Étirement Complet (Sans Bordures)'
             },
             de: {
-                title: 'Optimizer Plus',
-                status: 'Status',
                 active: 'Aktiv',
-                inactive: 'Inaktiv',
                 resolution: 'Auflösung',
-                forcedResolution: 'Erzwungene Auflösung',
                 targetResolution: 'Zielauflösung',
                 videoEnhancement: 'Videoverbesserung',
                 enableEnhancer: 'Enhancer aktivieren',
@@ -1050,35 +806,20 @@
                 presetComfort: 'Komfort',
                 presetPerfect: 'Perfekte Qualität',
                 presetCustom: 'Benutzerdefiniert',
-                noiseReduction: 'Rauschunterdrückung',
                 vibrance: 'Lebendigkeit',
                 clarity: 'Klarheit',
                 apply: 'Anwenden',
+                reload: 'Neu laden',
                 reset: 'Zurücksetzen',
-                settingsSaved: '[OK] Einstellungen gespeichert!',
                 settingsReset: '[<<] Einstellungen zurückgesetzt.',
                 presetApplied: '[*] Vorlage "{name}" angewendet!',
                 language: 'Sprache',
-                autoDetect: 'Automatisch',
-                streamInterceptor: 'Stream-Abfangjäger (HW-Dekodierung)',
-                bitrateEnforcer: 'Aggressiver Bitraten-Erzwinger (V4)',
-                ultrawideMode: 'Ultrawide-Modus (21:9, 32:9)',
-                ultrawideAutoDetect: 'Auto-Erkennung 21:9+',
                 performanceMode: 'Leistungsmodus',
-                performanceModeHint: 'Deaktiviert schwere Filter für maximale FPS',
-                displaySettings: 'Anzeige & Ultrawide',
-                screenInfo: 'Bildschirminfo',
-                fitMode: 'Anzeigemodus',
-                hwProfile: 'Profil',
                 stretchMode: 'Strecken (Keine Ränder)'
             },
             es: {
-                title: 'Optimizer Plus',
-                status: 'Estado',
                 active: 'Activo',
-                inactive: 'Inactivo',
                 resolution: 'Resolución',
-                forcedResolution: 'Resolución forzada',
                 targetResolution: 'Resolución objetivo',
                 videoEnhancement: 'Mejora de video',
                 enableEnhancer: 'Activar mejora',
@@ -1094,33 +835,20 @@
                 presetComfort: 'Confort',
                 presetPerfect: 'Calidad Perfecta',
                 presetCustom: 'Personalizado',
-                noiseReduction: 'Reducción de ruido',
                 vibrance: 'Vibración',
                 clarity: 'Claridad',
-                streamInterceptor: 'Interceptor Stream (Dec. HW)',
                 apply: 'Aplicar',
+                reload: 'Recargar',
                 reset: 'Restablecer',
-                settingsSaved: '[OK] ¡Configuración guardada!',
                 settingsReset: '[<<] Configuración restablecida.',
                 presetApplied: '[*] Preset "{name}" aplicado!',
                 language: 'Idioma',
-                autoDetect: 'Auto-detectar',
-                ultrawideMode: 'Modo Ultrawide (21:9, 32:9)',
                 performanceMode: 'Modo Rendimiento',
-                performanceModeHint: 'Desactiva filtros pesados para maximizar FPS',
-                displaySettings: 'Pantalla y Ultrawide',
-                screenInfo: 'Información de pantalla',
-                fitMode: 'Modo de visualización',
-                hwProfile: 'Perfil',
                 stretchMode: 'Estirar para llenar (Sin bordes)'
             },
             it: {
-                title: 'Optimizer Plus',
-                status: 'Stato',
                 active: 'Attivo',
-                inactive: 'Inattivo',
                 resolution: 'Risoluzione',
-                forcedResolution: 'Risoluzione forzata',
                 targetResolution: 'Risoluzione target',
                 videoEnhancement: 'Miglioramento video',
                 enableEnhancer: 'Attiva miglioramento',
@@ -1136,32 +864,20 @@
                 presetComfort: 'Comfort',
                 presetPerfect: 'Qualità Perfetta',
                 presetCustom: 'Personalizzato',
-                noiseReduction: 'Riduzione rumore',
                 vibrance: 'Vivacità',
                 clarity: 'Chiarezza',
-                streamInterceptor: 'Intercettore Stream (Dec. HW)',
                 apply: 'Applica',
+                reload: 'Ricarica',
                 reset: 'Ripristina',
-                settingsSaved: '[OK] Impostazioni salvate!',
                 settingsReset: '[<<] Impostazioni ripristinate.',
                 presetApplied: '[*] Preset "{name}" applicato!',
                 language: 'Lingua',
-                autoDetect: 'Auto-rileva',
-                ultrawideMode: 'Modalità Ultrawide (21:9, 32:9)',
                 performanceMode: 'Modalità Prestazioni',
-                performanceModeHint: 'Disattiva i filtri pesanti per massimizzare i FPS',
-                displaySettings: 'Display & Ultrawide',
-                screenInfo: 'Info schermo',
-                fitMode: 'Modalità display',
                 stretchMode: 'Allunga per riempire (Senza bordi)'
             },
             pt: {
-                title: 'Optimizer Plus',
-                status: 'Status',
                 active: 'Ativo',
-                inactive: 'Inativo',
                 resolution: 'Resolução',
-                forcedResolution: 'Resolução forçada',
                 targetResolution: 'Resolução alvo',
                 videoEnhancement: 'Melhoria de vídeo',
                 enableEnhancer: 'Ativar melhoria',
@@ -1177,32 +893,20 @@
                 presetComfort: 'Conforto',
                 presetPerfect: 'Qualidade Perfeita',
                 presetCustom: 'Personalizado',
-                noiseReduction: 'Redução de ruído',
                 vibrance: 'Vibração',
                 clarity: 'Clareza',
-                streamInterceptor: 'Interceptor Stream (Dec. HW)',
                 apply: 'Aplicar',
+                reload: 'Recarregar',
                 reset: 'Redefinir',
-                settingsSaved: '[OK] Configurações salvas!',
                 settingsReset: '[<<] Configurações redefinidas.',
                 presetApplied: '[*] Preset "{name}" aplicado!',
                 language: 'Idioma',
-                autoDetect: 'Auto-detectar',
-                ultrawideMode: 'Modo Ultrawide (21:9, 32:9)',
                 performanceMode: 'Modo de Desempenho',
-                performanceModeHint: 'Desativa filtros pesados para maximizar FPS',
-                displaySettings: 'Tela & Ultrawide',
-                screenInfo: 'Info tela',
-                fitMode: 'Modo de exibição',
                 stretchMode: 'Esticar (Sem bordas)'
             },
             ru: {
-                title: 'Optimizer Plus',
-                status: 'Статус',
                 active: 'Активен',
-                inactive: 'Неактивен',
                 resolution: 'Разрешение',
-                forcedResolution: 'Принудительное разрешение',
                 targetResolution: 'Целевое разрешение',
                 videoEnhancement: 'Улучшение видео',
                 enableEnhancer: 'Включить улучшение',
@@ -1218,33 +922,20 @@
                 presetComfort: 'Комфорт',
                 presetPerfect: 'Идеальное качество',
                 presetCustom: 'Пользовательский',
-                noiseReduction: 'Шумоподавление',
                 vibrance: 'Сочность',
                 clarity: 'Четкость',
-                streamInterceptor: 'Перехват потока (HW декод.)',
                 apply: 'Применить',
+                reload: 'Перезагрузить',
                 reset: 'Сброс',
-                settingsSaved: '[OK] Настройки сохранены!',
                 settingsReset: '[<<] Настройки сброшены.',
                 presetApplied: '[*] Пресет "{name}" применен!',
                 language: 'Язык',
-                autoDetect: 'Авто-определение',
-                ultrawideMode: 'Режим Ultrawide (21:9, 32:9)',
                 performanceMode: 'Режим производительности',
-                performanceModeHint: 'Отключает тяжелые фильтры для максимизации FPS',
-                displaySettings: 'Экран & Ultrawide',
-                screenInfo: 'Инфо экрана',
-                fitMode: 'Режим отображения',
-                hwProfile: 'Профиль',
                 stretchMode: 'Растянуть на весь экран'
             },
             pl: {
-                title: 'Optimizer Plus',
-                status: 'Status',
                 active: 'Aktywny',
-                inactive: 'Nieaktywny',
                 resolution: 'Rozdzielczość',
-                forcedResolution: 'Wymuszona rozdzielczość',
                 targetResolution: 'Docelowa rozdzielczość',
                 videoEnhancement: 'Ulepszanie wideo',
                 enableEnhancer: 'Włącz ulepszanie',
@@ -1260,33 +951,20 @@
                 presetComfort: 'Komfort',
                 presetPerfect: 'Perfekcyjna Jakość',
                 presetCustom: 'Niestandardowy',
-                noiseReduction: 'Redukcja szumu',
                 vibrance: 'Żywość',
                 clarity: 'Klarowność',
-                streamInterceptor: 'Przechwyt Stream (Dek. HW)',
                 apply: 'Zastosuj',
+                reload: 'Odśwież',
                 reset: 'Resetuj',
-                settingsSaved: '[OK] Ustawienia zapisane!',
                 settingsReset: '[<<] Ustawienia zresetowane.',
                 presetApplied: '[*] Preset "{name}" zastosowany!',
                 language: 'Język',
-                autoDetect: 'Auto-wykrywanie',
-                ultrawideMode: 'Tryb Ultrawide (21:9, 32:9)',
                 performanceMode: 'Tryb wydajności',
-                performanceModeHint: 'Wyłącza ciężkie filtry, aby zmaksymalizować FPS',
-                displaySettings: 'Ekran i Ultrawide',
-                screenInfo: 'Informacje o ekranie',
-                fitMode: 'Tryb wyświetlania',
-                hwProfile: 'Profil',
                 stretchMode: 'Rozciągnij (Bez ramek)'
             },
             uk: {
-                title: 'Optimizer Plus',
-                status: 'Статус',
                 active: 'Активний',
-                inactive: 'Неактивний',
                 resolution: 'Роздільна здатність',
-                forcedResolution: 'Примусова роздільна здатність',
                 targetResolution: 'Цільова роздільна здатність',
                 videoEnhancement: 'Покращення відео',
                 enableEnhancer: 'Увімкнути покращення',
@@ -1302,35 +980,20 @@
                 presetComfort: 'Комфорт',
                 presetPerfect: 'Ідеальна якість',
                 presetCustom: 'Користувацький',
-                noiseReduction: 'Зменшення шуму',
                 vibrance: 'Жвавість',
                 clarity: 'Чіткість',
-                streamInterceptor: 'Перехоплення потоку (апаратне декод.)',
                 apply: 'Застосувати',
+                reload: 'Перезавантажити',
                 reset: 'Скинути',
-                settingsSaved: '[OK] Налаштування збережено!',
                 settingsReset: '[<<] Налаштування скинуто.',
                 presetApplied: '[*] Пресет "{name}" застосовано!',
                 language: 'Мова',
-                autoDetect: 'Авто-визначення',
-                streamQuality: 'Якість стриму',
-                bitrateEnforcer: 'Примусовий бітрейт (V4)',
-                ultrawideMode: 'Режим Ultrawide (21:9, 32:9)',
-                displaySettings: 'Екран та Ultrawide',
-                screenInfo: 'Інформація про екран',
-                fitMode: 'Режим лідображення',
-                hwProfile: 'Профіль',
                 stretchMode: 'Розтягнути (Без окраїв)',
                 performanceMode: 'Режим продуктивності',
-                performanceModeHint: 'Вимкнення  важких фільтрів для максимізації FPS'
             },
             tr: {
-                title: 'Optimizer Plus',
-                status: 'Durum',
                 active: 'Aktif',
-                inactive: 'Pasif',
                 resolution: 'Çözünürlük',
-                forcedResolution: 'Zorlanmış çözünürlük',
                 targetResolution: 'Hedef çözünürlük',
                 videoEnhancement: 'Video iyileştirme',
                 enableEnhancer: 'İyileştiriciyi etkinleştir',
@@ -1346,28 +1009,20 @@
                 presetComfort: 'Konfor',
                 presetPerfect: 'Mükemmel Kalite',
                 presetCustom: 'Özel',
-                noiseReduction: 'Gürültü azaltma',
                 vibrance: 'Canlılık',
                 clarity: 'Netlik',
-                streamInterceptor: 'Akış Yakalayıcı (HW Çözücü)',
                 apply: 'Uygula',
+                reload: 'Yenile',
                 reset: 'Sıfırla',
-                settingsSaved: '[OK] Ayarlar kaydedildi!',
                 settingsReset: '[<<] Ayarlar sıfırlandı.',
                 presetApplied: '[*] Preset "{name}" uygulandı!',
                 language: 'Dil',
-                autoDetect: 'Otomatik algıla',
                 performanceMode: 'Performans Modu',
-                performanceModeHint: 'FPS\'yi en üst düzeye çıkarmak için ağır filtreleri devre dışı bırakır',
                 stretchMode: 'Ekrana Sığdır (Kenarlıksız)'
             },
             cs: {
-                title: 'Optimizer Plus',
-                status: 'Stav',
                 active: 'Aktivní',
-                inactive: 'Neaktivní',
                 resolution: 'Rozlišení',
-                forcedResolution: 'Vynucené rozlišení',
                 targetResolution: 'Cílové rozlišení',
                 videoEnhancement: 'Vylepšení videa',
                 enableEnhancer: 'Povolit vylepšení',
@@ -1383,28 +1038,20 @@
                 presetComfort: 'Komfort',
                 presetPerfect: 'Dokonalá Kvalita',
                 presetCustom: 'Vlastné',
-                noiseReduction: 'Redukce šumu',
                 vibrance: 'Živost',
                 clarity: 'Čistota',
-                streamInterceptor: 'Zachytávač Streamu (HW Dek.)',
                 apply: 'Použít',
+                reload: 'Obnovit',
                 reset: 'Obnovit',
-                settingsSaved: '[OK] Nastavení uloženo! Obnovte stránku.',
                 settingsReset: '[<<] Nastavení obnoveno. Obnovte stránku.',
                 presetApplied: '[*] Preset "{name}" použit!',
                 language: 'Jazyk',
-                autoDetect: 'Automaticky',
                 performanceMode: 'Režim výkonu',
-                performanceModeHint: 'Deaktivuje těžké filtry pro maximalizaci FPS',
                 stretchMode: 'Roztáhnout na celou obrazovku'
             },
             hu: {
-                title: 'Optimizer Plus',
-                status: 'Állapot',
                 active: 'Aktív',
-                inactive: 'Inaktív',
                 resolution: 'Felbontás',
-                forcedResolution: 'Kényszerített felbontás',
                 targetResolution: 'Cél felbontás',
                 videoEnhancement: 'Videó javítás',
                 enableEnhancer: 'Javító engedélyezése',
@@ -1420,28 +1067,20 @@
                 presetComfort: 'Kényelem',
                 presetPerfect: 'Tökéletes Minőség',
                 presetCustom: 'Egyéni',
-                noiseReduction: 'Zajcsökkentés',
                 vibrance: 'Élénkség',
                 clarity: 'Tisztaság',
-                streamInterceptor: 'Folyam Elfogó (HW Dek.)',
                 apply: 'Alkalmaz',
+                reload: 'Újratöltés',
                 reset: 'Visszaállítás',
-                settingsSaved: '[OK] Beállítások mentve! Töltse újra az oldalt.',
                 settingsReset: '[<<] Beállítások visszaállítva. Töltse újra az oldalt.',
                 presetApplied: '[*] Preset "{name}" alkalmazva!',
                 language: 'Nyelv',
-                autoDetect: 'Automatikus',
                 performanceMode: 'Teljesítmény mód',
-                performanceModeHint: 'Kikapcsolja a nehéz szűrőket az FPS maximalizálása érdekében',
                 stretchMode: 'Kitöltés a képernyőn (Keret nélkül)'
             },
             ro: {
-                title: 'Optimizer Plus',
-                status: 'Stare',
                 active: 'Activ',
-                inactive: 'Inactiv',
                 resolution: 'Rezoluție',
-                forcedResolution: 'Rezoluție forțată',
                 targetResolution: 'Rezoluție țintă',
                 videoEnhancement: 'Îmbunătățire video',
                 enableEnhancer: 'Activare îmbunătățire',
@@ -1457,28 +1096,20 @@
                 presetComfort: 'Confort',
                 presetPerfect: 'Calitate Perfectă',
                 presetCustom: 'Personalizat',
-                noiseReduction: 'Reducere zgomot',
                 vibrance: 'Vivacitate',
                 clarity: 'Limpezime',
-                streamInterceptor: 'Interceptor Stream (Dec. HW)',
                 apply: 'Aplică',
+                reload: 'Reîncarcă',
                 reset: 'Resetare',
-                settingsSaved: '[OK] Setări salvate! Reîncarcați pagina.',
                 settingsReset: '[<<] Setări resetate. Reîncarcați pagina.',
                 presetApplied: '[*] Preset "{name}" aplicat!',
                 language: 'Limbă',
-                autoDetect: 'Auto-detectare',
                 performanceMode: 'Mod Performanță',
-                performanceModeHint: 'Dezactivează filtrele grele pentru a maximiza FPS',
                 stretchMode: 'Întinde pe tot ecranul'
             },
             sk: {
-                title: 'Optimizer Plus',
-                status: 'Stav',
                 active: 'Aktívny',
-                inactive: 'Neaktívny',
                 resolution: 'Rozlíšenie',
-                forcedResolution: 'Vynútené rozlíšenie',
                 targetResolution: 'Cieľové rozlíšenie',
                 videoEnhancement: 'Vylepšenie videa',
                 enableEnhancer: 'Povoliť vylepšenie',
@@ -1494,28 +1125,20 @@
                 presetComfort: 'Komfort',
                 presetPerfect: 'Dokonalá Kvalita',
                 presetCustom: 'Vlastné',
-                noiseReduction: 'Redukcia šumu',
                 vibrance: 'Živosť',
                 clarity: 'Čistota',
-                streamInterceptor: 'Zachytávač Streamu (HW Dek.)',
                 apply: 'Použiť',
+                reload: 'Obnoviť',
                 reset: 'Obnoviť',
-                settingsSaved: '[OK] Nastavenia uložené! Obnovte stránku.',
                 settingsReset: '[<<] Nastavenia obnovené. Obnovte stránku.',
                 presetApplied: '[*] Preset "{name}" použitý!',
                 language: 'Jazyk',
-                autoDetect: 'Automaticky',
                 performanceMode: 'Režim výkonu',
-                performanceModeHint: 'Deaktivuje ťažké filtre pre maximalizáciu FPS',
                 stretchMode: 'Roztiahnuť (Bez okrajov)'
             },
             sv: {
-                title: 'Optimizer Plus',
-                status: 'Status',
                 active: 'Aktiv',
-                inactive: 'Inaktiv',
                 resolution: 'Upplösning',
-                forcedResolution: 'Tvingad upplösning',
                 targetResolution: 'Målupplösning',
                 videoEnhancement: 'Videoförbättring',
                 enableEnhancer: 'Aktivera förbättring',
@@ -1531,29 +1154,15 @@
                 presetComfort: 'Komfort',
                 presetPerfect: 'Perfekt Kvalitet',
                 presetCustom: 'Anpassad',
-                noiseReduction: 'Brusreducering',
                 vibrance: 'Livfullhet',
                 clarity: 'Klarhet',
-                streamInterceptor: 'Stream Interceptor (HW Avk.)',
                 apply: 'Tillämpa',
+                reload: 'Ladda om',
                 reset: 'Återställ',
-                settingsSaved: '[OK] Inställningar sparade!',
                 settingsReset: '[<<] Inställningar återställda.',
                 presetApplied: '[*] Förinställning "{name}" tillämpad!',
                 language: 'Språk',
-                autoDetect: 'Automatisk',
-                deviceProfile: 'Enhet',
-                filterTier: 'Kvalitetsnivå',
-                adaptiveMode: 'Adaptivt läge',
-                bitrateEnforcer: 'Aggressiv bitratetvingare (V4)',
-                ultrawideMode: 'Ultrawide-läge (21:9, 32:9)',
-                ultrawideAutoDetect: 'Auto-detektera 21:9+',
                 performanceMode: 'Prestandaläge',
-                performanceModeHint: 'Inaktiverar tunga filter för att maximera FPS',
-                displaySettings: 'Skärm och Ultrawide',
-                screenInfo: 'Skärminfo',
-                fitMode: 'Visningsläge',
-                hwProfile: 'Profil',
                 stretchMode: 'Sträck ut (Utan kanter)'
             }
         }
@@ -1581,15 +1190,12 @@
     // SVG ICONS
 
     const ICONS = {
-        settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
         monitor: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
         film: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>`,
-        sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
         eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
         target: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
         cpu: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>`,
         activity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
-        contrast: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z"/></svg>`,
         sparkles: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M5 19l.5 1.5L7 21l-1.5.5L5 23l-.5-1.5L3 21l1.5-.5L5 19z"/><path d="M19 5l.5 1.5L21 7l-1.5.5L19 9l-.5-1.5L17 7l1.5-.5L19 5z"/></svg>`,
         check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
         x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
@@ -1912,29 +1518,7 @@
             color: #fff;
         }
 
-        .optimizer-injected .optimizer-preset-perfect {
-            border-color: rgba(0, 136, 204, 0.6);
-        }
-
-        .optimizer-injected .optimizer-preset-perfect:hover {
-            background: linear-gradient(135deg, rgba(0, 163, 255, 0.2), rgba(0, 102, 204, 0.2));
-            border-color: #00a3ff;
-        }
-
-        .optimizer-injected .optimizer-preset-perfect.active {
-            background: linear-gradient(135deg, #00a3ff, #0066cc);
-            border-color: #00a3ff;
-        }
-
         /* STATUS INDICATOR                                                           */
-
-        .optimizer-injected .optimizer-status {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.85);
-        }
 
         .optimizer-injected .optimizer-status-dot {
             width: 6px;
@@ -1942,14 +1526,6 @@
             border-radius: 50%;
             background: #22c55e;
             animation: optimizer-pulse 2s infinite;
-        }
-
-        .optimizer-injected .optimizer-status-dot.warning {
-            background: #f59e0b;
-        }
-
-        .optimizer-injected .optimizer-status-dot.error {
-            background: #ef4444;
         }
 
         @keyframes optimizer-pulse {
@@ -2551,7 +2127,7 @@
     // Persist and reload only what the UI controls. streaming/performance are internal
     // tuning versioned with the script: reloading them from an old save would override
     // new defaults.
-    const PERSISTED_KEYS = ['filters', 'enhancer', 'resolution', 'display', 'drm', 'language'];
+    const PERSISTED_KEYS = ['filters', 'enhancer', 'resolution', 'display', 'language'];
     function pickPersisted(config) {
         const out = {};
         if (!isPlainObject(config)) return out;
@@ -2602,7 +2178,10 @@
         if (isNewSession) {
             console.log('[Optimizer+] Nouvelle session d\u00E9tect\u00E9e, reset des presets');
             savedConfig.filters = JSON.parse(JSON.stringify(DEFAULT_CONFIG.filters));
-            savedConfig.enhancer = { ...DEFAULT_CONFIG.enhancer };
+            // A new session restores the default settings but never turns the enhancer back on
+            // behind the user's back (Reset turns it off)
+            const enhancerOn = !savedConfig.enhancer || savedConfig.enhancer.enabled !== false;
+            savedConfig.enhancer = { ...DEFAULT_CONFIG.enhancer, enabled: enhancerOn };
             Storage.set('lastSessionId', currentSessionId);
         }
         // Deep merge so saved configs do not wipe newly added default keys
@@ -2623,8 +2202,8 @@
         }
         deepMerge(CONFIG, pickPersisted(savedConfig));
 
-        // The enhancer is always on; neutral saved values (1.0) fall back to the defaults
-        CONFIG.enhancer.enabled = true;
+        // Neutral saved values (1.0) fall back to the defaults. An enhancer turned off (Reset)
+        // stays off until the user turns it back on.
         if (CONFIG.enhancer.contrast === 1.0) CONFIG.enhancer.contrast = 1.08;
         if (CONFIG.enhancer.saturation === 1.0) CONFIG.enhancer.saturation = 1.05;
         if (CONFIG.enhancer.brightness === 1.0) CONFIG.enhancer.brightness = 1.02;
@@ -2639,20 +2218,9 @@
         Storage.set('lastSessionId', currentSessionId);
     }
 
+    // hookResolution() sets the real screen size in init
     if (!savedConfig || !savedConfig.resolution || savedConfig.resolution.isAuto === true) {
-        const nativeScreen = SmartResolutionDetector.getScreenDimensions();
-        const bestMatch = SmartResolutionDetector.findBestMatch(nativeScreen.width, nativeScreen.height);
-
-        if (bestMatch) {
-            CONFIG.resolution.width = bestMatch.w;
-            CONFIG.resolution.height = bestMatch.h;
-        } else {
-            CONFIG.resolution.width = nativeScreen.width;
-            CONFIG.resolution.height = nativeScreen.height;
-        }
-        CONFIG.resolution.pixelRatio = nativeScreen.devicePixelRatio || 1;
         CONFIG.resolution.isAuto = true;
-        console.log(`[Optimizer+] Auto-resolution au d\u00E9marrage: ${CONFIG.resolution.width}x${CONFIG.resolution.height}`);
     }
 
     // detectLanguage() first ran before the saved config was loaded
@@ -4929,7 +4497,9 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 try {
                     this.videoElement = videoElement;
                     const source = `${gpuCreatePipeline}\n${gpuTargetSize}\n${gpuVisibleSize}\n${gpuCheckImport}\n${gpuDrawFrame}\n(${workerRendererMain})()`;
-                    this.worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+                    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+                    this.worker = new Worker(url);
+                    URL.revokeObjectURL(url);
                     this.worker.onerror = (e) => (settled ? this._fail(e.message) : done(false));
                     this.worker.onmessage = ({ data: m }) => {
                         if (m.type === 'ready') {
@@ -5225,7 +4795,19 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                     });
                 }
 
-                gpuDrawFrame(this.device, this.context, this._gpu, video, texW, texH, this._uniformData, visW, visH);
+                // Same import check as the worker renderer: copy path until cleared
+                const key = texW + 'x' + texH;
+                this._copySizes = this._copySizes || new Map();
+                if (!this._copySizes.has(key)) {
+                    this._copySizes.set(key, true);
+                    gpuCheckImport(this.device, this._gpu, video, texW, texH)
+                        .then((diff) => {
+                            this._copySizes.set(key, diff > 8);
+                            console.log(`[Optimizer+] [Render] ${key} main-thread import differs from 2D canvas by ${diff.toFixed(1)}`);
+                        })
+                        .catch(() => {});
+                }
+                gpuDrawFrame(this.device, this.context, this._gpu, video, texW, texH, this._uniformData, visW, visH, this._copySizes.get(key));
                 if (off && !this._upscaleWarned) {
                     this._upscaleWarned = true;
                     showNotification(t('upscaleOffNotif'));
@@ -5452,16 +5034,14 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
             }
         }
 
+        // After a tab switch: restart the loop. The renderer decides what is shown; a renderer
+        // that gave up (fail-open, lost context) or filters the user turned off keep the raw video.
         ensureActive() {
             const r = this._getActiveRenderer();
-            if (r && r.canvas && r.videoElement) {
-                r.isActive = true;
-                r.canvas.style.display = 'block';
-                if (r.videoElement.style.opacity !== '0.01') {
-                    r.videoElement.style.opacity = '0.01';
-                }
-                r.startRenderLoop();
-            }
+            if (!r || !r.canvas || !r.videoElement || r._failOpen) return;
+            if (r.gl && r.gl.isContextLost()) return;
+            r.updateUniforms(CONFIG);
+            r.startRenderLoop();
         }
 
         updateSettings(settings) {
@@ -5530,72 +5110,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
     }
 
     const videoEnhancer = new VideoEnhancer();
-
-    // DRM HOOKS
-
-    function hookDRM() {
-        // Originals stay in closures (never exposed on globals); the flag prevents double hooking
-        if (windowCtx.MSMediaKeys && !windowCtx.MSMediaKeys.__optimizerHooked) {
-            windowCtx.MSMediaKeys.__optimizerHooked = true;
-
-            if (typeof windowCtx.MSMediaKeys.isTypeSupportedWithFeatures === 'function') {
-                const originalFn = windowCtx.MSMediaKeys.isTypeSupportedWithFeatures.bind(windowCtx.MSMediaKeys);
-                windowCtx.MSMediaKeys.isTypeSupportedWithFeatures = function (keySystem, targetMediaCodec) {
-                    if (typeof targetMediaCodec !== 'string') {
-                        return originalFn(keySystem, targetMediaCodec);
-                    }
-                    const reg = /,display-res-[xy]=\d+,display-res-[xy]=\d+/;
-                    targetMediaCodec = targetMediaCodec.replace(reg, "");
-
-                    if (CONFIG.drm.forceDolbyVision && targetMediaCodec.indexOf("ext-profile=dvh") !== -1) {
-                        keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
-                    }
-                    if (CONFIG.codecs.forceHEVC && targetMediaCodec.indexOf("ext-profile=dvh") === -1 &&
-                        (targetMediaCodec.indexOf("hvc1") !== -1 || targetMediaCodec.indexOf("hev1") !== -1)) {
-                        keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
-                    }
-                    if (CONFIG.drm.forceHDCP && targetMediaCodec.indexOf("hdcp=") !== -1) {
-                        targetMediaCodec = targetMediaCodec.replace(/hdcp=[12],?/g, "");
-                    }
-                    if (CONFIG.drm.forceUHD && targetMediaCodec.indexOf("decode-res-") !== -1) {
-                        targetMediaCodec = targetMediaCodec.replace(/decode-res-[xy]=\d+,?/g, "");
-                    }
-                    if (CONFIG.drm.forceALL) return "probably";
-                    return originalFn(keySystem, targetMediaCodec);
-                };
-            }
-
-            if (typeof windowCtx.MSMediaKeys.isTypeSupported === 'function') {
-                const originalFn = windowCtx.MSMediaKeys.isTypeSupported.bind(windowCtx.MSMediaKeys);
-                windowCtx.MSMediaKeys.isTypeSupported = function (keySystem) {
-                    if (typeof keySystem === 'string') {
-                        keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
-                    }
-                    return originalFn(keySystem);
-                };
-            }
-        }
-
-        // Navigator MediaKeySystemAccess (Standard EME)
-        if (windowCtx.navigator.requestMediaKeySystemAccess && !windowCtx.navigator.__optimizerEMEHooked) {
-            const original = windowCtx.navigator.requestMediaKeySystemAccess.bind(windowCtx.navigator);
-            Object.defineProperty(windowCtx.navigator, '__optimizerEMEHooked', { value: true, writable: false });
-
-            windowCtx.navigator.requestMediaKeySystemAccess = async function (keySystem, options) {
-                if (typeof keySystem === 'string' && keySystem.indexOf("playready") !== -1) {
-                    try {
-                        return await original(keySystem, options);
-                    } catch (e) {
-                        console.warn("[Optimizer+] Fallback PlayReady hardware -> software");
-                        return await original("com.microsoft.playready", options);
-                    }
-                }
-                return await original(keySystem, options);
-            };
-        }
-
-        console.log('[Optimizer+] Hooks DRM install\u00E9s');
-    }
 
     // UI INJECTION - Adds the panel to the Boosteroid menu
 
@@ -5688,7 +5202,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         for (const mobileMenu of mobileMenus) {
             const style = window.getComputedStyle(mobileMenu);
             if (style.display !== 'none' && mobileMenu.offsetParent !== null) {
-                console.log('[Optimizer+] Menu Mobile Boosteroid trouvé (.m_lan_wrapper visible)');
                 return mobileMenu;
             }
         }
@@ -6000,7 +5513,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         const scheduleNextCheck = () => {
             const streamingNow = isStreamingPage();
             const delay = streamingNow
-                ? (SessionState.isUIInjected ? 10000 : 2000)
+                ? (SessionState.isUIInjected ? 10000 : 5000)
                 : 5000;
             setTimeout(() => {
                 if (isStreamingPage()) checkAndInject();
@@ -6438,15 +5951,8 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
                 if (value === 'auto') {
                     isAutoMode = true;
-                    const autoRes = SmartResolutionDetector.applyAutoResolution();
-                    if (autoRes) {
-                        width = autoRes.w;
-                        height = autoRes.h;
-                    } else {
-                        const screen = SmartResolutionDetector.getScreenDimensions();
-                        width = screen.width;
-                        height = screen.height;
-                    }
+                    width = _realScreen.width;
+                    height = _realScreen.height;
                 } else {
                     [width, height] = value.split('x').map(Number);
                 }
@@ -6454,7 +5960,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 CONFIG.resolution.width = width;
                 CONFIG.resolution.height = height;
                 CONFIG.resolution.isAuto = isAutoMode;
-                CONFIG.resolution.pixelRatio = width >= 3840 ? 2 : (width >= 2560 ? 1.5 : 1);
 
                 const resDisplay = document.getElementById('optimizer-resolution');
                 if (resDisplay) {
@@ -6583,9 +6088,9 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         const resetBtn = document.getElementById('optimizer-reset');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
-                CONFIG.resolution = { ...DEFAULT_CONFIG.resolution };
-                CONFIG.enhancer = { ...DEFAULT_CONFIG.enhancer };
-                CONFIG.enhancer.enabled = true;
+                // Reset turns every image effect off, so Boosteroid's own picture is shown. The
+                // chosen resolution and the slider defaults are kept for when effects come back.
+                CONFIG.enhancer = { ...DEFAULT_CONFIG.enhancer, enabled: false };
                 CONFIG.filters = JSON.parse(JSON.stringify(DEFAULT_CONFIG.filters));
                 CONFIG.language = DEFAULT_CONFIG.language;
 
@@ -6594,9 +6099,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 const glCanvas = document.getElementById('optimizer-webgpu-canvas') || document.getElementById('optimizer-webgl-canvas');
                 if (glCanvas) glCanvas.style.objectFit = 'contain';
 
-                hookResolution();
-                // Boosteroid re-reads the screen size on resize
-                setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
 
                 localStorage.removeItem('optimizer_config');
                 saveConfig(false);
@@ -6747,11 +6249,11 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
     function updateAllUIValues() {
         const resSelect = document.getElementById('optimizer-res-select');
         if (resSelect) {
-            resSelect.value = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
+            resSelect.value = CONFIG.resolution.isAuto ? 'auto' : `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
         }
         const resDisplay = document.getElementById('optimizer-resolution');
         if (resDisplay) {
-            resDisplay.textContent = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
+            resDisplay.textContent = (CONFIG.resolution.isAuto ? 'Auto: ' : '') + `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
         }
 
         const enhancerToggle = document.getElementById('optimizer-enhancer');
@@ -7014,7 +6516,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                     </div>
 
                     <div class="opt-widget-row">
-                        <label class="opt-widget-label">Target Resolution</label>
+                        <label class="opt-widget-label">${escapeHtml(t('targetResolution'))}</label>
                         <select class="opt-widget-select" id="opt-widget-resolution" style="background:rgba(6,9,18,0.9);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;pointer-events:auto !important;">
                             ${resolutionOptions}
                         </select>
@@ -7022,19 +6524,19 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
                     <!-- Boutons d'action -->
                     <div class="opt-widget-actions" style="display:flex;gap:8px;">
-                        <button class="opt-widget-action-btn secondary" id="opt-widget-reload" title="Recharger la page" style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:auto !important;">
+                        <button class="opt-widget-action-btn secondary" id="opt-widget-reload" title="${escapeHtml(t('reload'))}" style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:auto !important;">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <polyline points="1 20 1 14 7 14"/>
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                             </svg>
-                            Recharger
+                            ${escapeHtml(t('reload'))}
                         </button>
-                        <button class="opt-widget-action-btn primary" id="opt-widget-apply" title="Appliquer" style="background:#00a3ff;color:#fff;border:none;border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:auto !important;">
+                        <button class="opt-widget-action-btn primary" id="opt-widget-apply" title="${escapeHtml(t('apply'))}" style="background:#00a3ff;color:#fff;border:none;border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:auto !important;">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
                                 <polyline points="20 6 9 17 4 12"/>
                             </svg>
-                            Appliquer
+                            ${escapeHtml(t('apply'))}
                         </button>
                     </div>
 
@@ -7173,7 +6675,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="20 6 9 17 4 12"/>
                         </svg>
-                        Appliqu\u00E9!
+                        ${escapeHtml(t('apply'))} \u2713
                     `;
                     applyBtn.style.background = '#22c55e';
 
@@ -7182,7 +6684,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="20 6 9 17 4 12"/>
                             </svg>
-                            Appliquer
+                            ${escapeHtml(t('apply'))}
                         `;
                         applyBtn.style.background = '';
 
@@ -7207,17 +6709,9 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
                 if (value === 'auto') {
                     isAutoMode = true;
-                    const autoRes = SmartResolutionDetector.applyAutoResolution();
-                    if (autoRes) {
-                        width = autoRes.w;
-                        height = autoRes.h;
-                        displayText = `Auto: ${width}x${height}`;
-                    } else {
-                        const screen = SmartResolutionDetector.getScreenDimensions();
-                        width = screen.width;
-                        height = screen.height;
-                        displayText = `Auto: ${width}x${height}`;
-                    }
+                    width = _realScreen.width;
+                    height = _realScreen.height;
+                    displayText = `Auto: ${width}x${height}`;
                 } else {
                     [width, height] = value.split('x').map(Number);
                     displayText = `${width}x${height}`;
@@ -7225,7 +6719,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
                 CONFIG.resolution.width = width;
                 CONFIG.resolution.height = height;
-                CONFIG.resolution.pixelRatio = width >= 3840 ? 2 : (width >= 2560 ? 1.5 : 1);
                 CONFIG.resolution.isAuto = isAutoMode;
 
                 if (statusText) {
@@ -7234,7 +6727,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
                 const statusDot = document.querySelector('#optimizer-dashboard-widget .opt-status-dot');
                 if (statusDot) {
-                    statusDot.title = `Actif: ${displayText}`;
+                    statusDot.title = `${t('active')}: ${displayText}`;
                 }
 
                 const screenValue = document.querySelector('.opt-screen-value');
@@ -7341,7 +6834,10 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                     let n = 0;
                     report(`[Optimizer+] [Capture] ws open ${short(args[0])}`);
                     // Only the first messages are inspected: later traffic costs one counter increment
-                    ws.send = (data) => { if (n++ < 40) note('ws send', short(args[0]), data); return send(data); };
+                    ws.send = (data) => {
+                        if (n++ < 40) note('ws send', short(args[0]), data);
+                        return send(data);
+                    };
                     return ws;
                 }
             });
@@ -7362,7 +6858,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         // Technical hooks apply everywhere (dashboard included): they prepare the browser for streaming
         hookResolution();
         hookCodecs();
-        hookDRM();
         hookPerformance();
         hookBitrate();
         SmartCodecSelector.probe();

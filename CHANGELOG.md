@@ -12,6 +12,13 @@ Remplace la v6.1.0 publiée le matin du même jour.
 - **Reset** remet aussi le flux en résolution native et les réglages d'un début de session (avant : netteté USM + CAS au maximum).
 - **Filtres et changement de résolution.** Quand le flux est plus grand que l'affichage, il est d'abord réduit à la taille de l'affichage, puis filtré : moins de moiré (3200x1800 vers 1080p : 81 -> 0 sur un motif d'une ligne). En taille native, l'image est affichée pixel pour pixel. Le canvas n'est plus placé sur un demi-pixel.
 - `StreamInterceptor` supprimé : il ciblait des URL que Boosteroid n'utilise pas.
+- **Reset** coupe tous les effets (enhancer, filtres, presets, étirement) pour revenir à l'image d'origine de Boosteroid, et garde la résolution choisie. Les effets restent coupés jusqu'à ce que l'utilisateur les réactive, y compris d'une session à l'autre.
+- **Rendu de secours (sans worker, ex. Safari iOS)** : même correctif des couleurs décalées que le rendu principal.
+- **Widget du tableau de bord** traduit dans les 15 langues (il affichait « Recharger », « Appliquer », « Actif » en français pour tout le monde).
+- Retour sur l'onglet (Alt+Tab) : le rendu n'est plus réactivé de force quand l'utilisateur a coupé les effets ou quand le rendu a échoué.
+- Fuite de mémoire corrigée à chaque redémarrage du worker de rendu ; vérification du menu en jeu toutes les 5 s au lieu de 2 s.
+- Nettoyage : environ 560 lignes de code mort retirées (ancienne résolution Auto et son minuteur, analyse d'écran inutilisée, hooks DRM pour l'ancien Edge, traductions et CSS jamais utilisés). La liste des résolutions est inchangée.
+- `@version` 6.1.1.1 : même version 6.1.1, chiffre ajouté pour que Tampermonkey livre ces correctifs à ceux qui avaient déjà la 6.1.1.
 
 
 ### Qualité d'image
