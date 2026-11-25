@@ -1,0 +1,21 @@
+# Build output (optional - commit if you want dist in repo)
+# Boosteroid-Optimizer-Plus.user.js
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Old versions
+*.user.js.bak
+*.backup
+# Private dev build (console report on) - never publish
+*.dev.user.js

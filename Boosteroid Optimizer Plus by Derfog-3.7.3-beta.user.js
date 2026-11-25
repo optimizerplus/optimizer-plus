@@ -1,55 +1,56 @@
 // ==UserScript==
-// @name                 Boosteroid Optimizer Plus by Derfog (BETA)
-// @name:fr              Boosteroid Optimizer Plus par Derfog (BETA)
-// @namespace            https://github.com/optimizerplus
-// @version              3.7.3-beta
-// @description          BETA: Ultimate Boosteroid optimizer with 120 FPS Mobile Unlock (UA Spoofing). Test at your own risk!
-// @description:fr       BETA: Optimiseur ultime Boosteroid avec déblocage 120 FPS Mobile (UA Spoofing). Testez à vos risques!
-// @author               Derfog
-// @license              MIT
-// @copyright            2024-2025, Derfog (https://github.com/Derfogd)
-// @homepageURL          https://optimizerplus.github.io
-// @supportURL           https://github.com/optimizerplus/optimizer-plus-v3.7.2/issues
-// @match                https://cloud.boosteroid.com/*
-// @match                https://*.boosteroid.com/*
-// @icon                 https://www.google.com/s2/favicons?sz=64&domain_url=https%3A%2F%2Fboosteroid.com
-// @run-at               document-start
-// @grant                unsafeWindow
-// @grant                GM_registerMenuCommand
-// @grant                GM_setValue
-// @grant                GM_getValue
-// @grant                GM_addStyle
+// @name                Boosteroid Optimizer Plus
+// @namespace           https://github.com/Derfogd
+// @version             6.1.0
+// @description         Advanced optimizations for Boosteroid: 4K resolution, AV1/HEVC codec, tuned bitrate, WebGPU zero-copy upscaling
+// @description:fr      Optimisations avancées pour Boosteroid : résolution 4K/8K, codec AV1/HEVC, bitrate optimisé, WebGPU zéro copie
+// @author              Derfog
+// @match               https://*.boosteroid.com/*
+// @match               https://boosteroid.com/*
+// @grant               none
+// @run-at              document-start
+// @updateURL           https://raw.githubusercontent.com/optimizerplus/optimizer-plus/main/Boosteroid-Optimizer-Plus.user.js
+// @downloadURL         https://raw.githubusercontent.com/optimizerplus/optimizer-plus/main/Boosteroid-Optimizer-Plus.user.js
+// @noframes
 // ==/UserScript==
-
-/**
- * BOOSTEROID OPTIMIZER PLUS v3.7.3-BETA "120 FPS Mobile Unlock" by DERFOG
- * Copyright (c) 2024-2025 Derfog - MIT License
- *
- * v3.7.3-beta: 120 FPS Mobile Unlock Edition (EXPERIMENTAL)
- * - NEW: User Agent Spoofing to unlock 120 FPS on mobile devices
- * - NEW: Optional desktop mode simulation for mobile users
- * - WARNING: This is a BETA feature - test at your own risk!
- * - Based on v3.7.2: Smart Quality Edition
- */
 
 (function () {
     'use strict';
 
-    // ===============================================================================
-    // AXE 1: ENVIRONMENT DETECTION & PROFILING (avec fallbacks robustes)
-    // ===============================================================================
+// === GLOBALS & DEBUG CONSOLE ===
 
-    const ENV_PROFILE = (function() {
-        // Helpers pour accès sécurisé aux APIs navigateur
+    // warn/error always pass through. Debug: localStorage.setItem('optimizer_debug','1') + reload.
+    const DEBUG_LOGS = (() => {
+        try { return localStorage.getItem('optimizer_debug') === '1'; } catch (e) { return false; }
+    })();
+    // Two copies of the script (prod + dev) must never hook the page twice
+    if (window.__optimizerPlusLoaded) return;
+    window.__optimizerPlusLoaded = true;
+
+    // Flipped to true by build.js for the dev build: prints the [Stats] report in the console.
+    const DEV_BUILD = false;
+
+    const _realConsole = window.console;
+    const console = DEBUG_LOGS ? _realConsole : {
+        log: () => {},
+        warn: _realConsole.warn.bind(_realConsole),
+        error: _realConsole.error.bind(_realConsole)
+    };
+
+    // Single source of truth for the version; keep in sync with @version.
+    const SCRIPT_VERSION = '6.1.0';
+
+    // ENVIRONMENT DETECTION & PROFILING
+
+    const ENV_PROFILE = (function () {
         const safeGet = (fn, fallback) => {
             try { return fn() ?? fallback; } catch (e) { return fallback; }
         };
 
         const ua = navigator.userAgent || '';
         const cores = safeGet(() => navigator.hardwareConcurrency, 4);
-        const memory = safeGet(() => navigator.deviceMemory, 4); // GB - non supporté sur Firefox/Safari
+        const memory = safeGet(() => navigator.deviceMemory, null); // GB; null when unsupported (Firefox/Safari)
 
-        // matchMedia peut échouer sur certains navigateurs TV
         let isTouch = false;
         try {
             isTouch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
@@ -61,7 +62,6 @@
         const height = safeGet(() => window.innerHeight || document.documentElement.clientHeight, 1080);
         const dpr = safeGet(() => window.devicePixelRatio, 1);
 
-        // Network Information API (non supportée partout)
         let connection = null;
         let effectiveType = '4g';
         let downlink = null;
@@ -78,49 +78,38 @@
             console.log('[Optimizer+] Network API non disponible, utilisation des valeurs par défaut');
         }
 
-        // Détection UA
         const isMobile = /Android|iPhone|iPad|iPod|Windows Phone/i.test(ua);
         const isTablet = /iPad|Android(?!.*Mobile)/i.test(ua);
-        // Fix: Ajout patterns TV modernes (Steam Link, Shield, Chromecast, Android TV, tvOS)
         const isTVByUA = /SmartTV|Tizen|WebOS|NetCast|HbbTV|BRAVIA|AFT|Fire TV|Hisense|VIDAA|Roku|PlayStation|Xbox|Steam Link|SHIELD|Chromecast|Android TV|tvOS|GoogleTV|Apple TV/i.test(ua);
-        // Heuristique: Grand écran (>1920) + DPR 1.0 + pas mobile/tablet = probablement TV
+        // Heuristic: large screen + DPR 1.0 + not mobile/tablet is probably a TV
         const isTVByHeuristic = (width > 1920 && height > 1080 && dpr === 1.0 && !isMobile && !isTablet);
         const isTV = isTVByUA || isTVByHeuristic;
         const isFirefox = /Firefox/i.test(ua);
         const isChrome = /Chrome|Chromium|CriOS/i.test(ua);
         const isSafari = /Safari/i.test(ua) && !/Chrome/i.test(ua);
         const isEdge = /Edg/i.test(ua);
-        const isOldBrowser = /MSIE|Trident|Edge\/\d+\./i.test(ua); // Ancien Edge non-Chromium
+        const isOldBrowser = /MSIE|Trident|Edge\/\d+\./i.test(ua); // Legacy non-Chromium Edge
 
-        // Fix: Ne pas utiliser effectiveType pour classifier Low-End sur desktop (faux positifs '4g')
+        // effectiveType is unreliable on desktop (false '4g'), so it only counts on mobile
         const isSlowByNetwork = isMobile && (effectiveType === '3g' || effectiveType === '2g');
-        // Classification de puissance (avec logique améliorée)
-        const isLowEnd = cores <= 4 || memory <= 4 || isSlowByNetwork || isOldBrowser;
-        const isHighEnd = cores > 8 && memory > 8 && !isMobile && !isTablet;
+        const isLowEnd = cores <= 4 || (memory !== null && memory <= 4) || isSlowByNetwork || isOldBrowser;
+        const isHighEnd = cores > 8 && (memory === null || memory > 8) && !isMobile && !isTablet;
         const isMidRange = !isLowEnd && !isHighEnd;
 
-        // Classification d'écran
         const isSmallScreen = width < 1280 || height < 720;
         const isMediumScreen = width >= 1280 && width < 1920;
         const isLargeScreen = width >= 1920 && height >= 1080;
 
         return {
-            // Device type
             isMobile, isTablet, isTV, isSmallScreen, isMediumScreen, isLargeScreen,
-            // Performance class
             cores, memory, isLowEnd, isMidRange, isHighEnd, isOldBrowser,
-            // Browser & rendering
             isFirefox, isChrome, isSafari, isEdge,
-            // Network
             effectiveType, downlink, saveData,
-            // Fix: isSlowNetwork utilise downlink en priorité, effectiveType seulement sur mobile
-            isSlowNetwork: (downlink !== null && downlink > 0 && downlink < 5) || (isMobile && (effectiveType === '3g' || effectiveType === '2g')),
+            // Network API downlink is unreliable on desktop, so slow-network only applies to mobile
+            isSlowNetwork: isMobile && ((downlink !== null && downlink > 0 && downlink < 5) || (effectiveType === '3g' || effectiveType === '2g')),
             isFastNetwork: (downlink !== null && downlink >= 15) || (!isMobile && effectiveType === '4g'),
-            // Display
             width, height, dpr,
-            // Input
             isTouch,
-            // Summary string for logging
             summary() {
                 const device = this.isTV ? 'TV' : (this.isMobile ? 'Mobile' : (this.isTablet ? 'Tablet' : 'Desktop'));
                 const perf = this.isLowEnd ? 'Low-End' : (this.isHighEnd ? 'High-End' : 'Mid-Range');
@@ -133,197 +122,69 @@
     console.log('[Optimizer+] =======================================');
     console.log('[Optimizer+] Device Profile:', ENV_PROFILE.summary());
 
-    // ===============================================================================
-    // [BETA] UA SPOOFING - Mobile to Desktop (v3.7.3-beta)
-    // Permet de débloquer 120 FPS sur mobile en se faisant passer pour un desktop Linux
-    // Fonctionne aussi en mode PWA (standalone) sur Safari/iOS
-    // ===============================================================================
-
-    const UA_SPOOF_CONFIG = {
-        enabled: true,  // BETA: ACTIVÉ par défaut pour tester le 120 FPS mobile
-        targetUA: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-        // Forcer le mode desktop même en PWA
-        forcePWADesktop: true
-    };
-
-    // Détecter si on est en mode PWA (standalone)
-    function isPWAMode() {
-        // iOS Safari standalone
-        if (window.navigator.standalone === true) return true;
-        // Android/Chrome PWA
-        if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
-        if (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) return true;
-        // Fallback: vérifier si pas de barre d'adresse visible (heuristique)
-        if (window.innerHeight === screen.height) return true;
-        return false;
-    }
-
-    const IS_PWA = isPWAMode();
-    if (IS_PWA) {
-        console.log('[Optimizer+] [BETA] 📱 Mode PWA/Standalone détecté!');
-    }
-
-    // ⚠️ [BETA] UA Spoof ACTIVÉ - Le mobile/PWA sera détecté comme Desktop Linux Chrome
-    function spoofUserAgent() {
-        if (!UA_SPOOF_CONFIG.enabled) {
-            console.log('[Optimizer+] [BETA] UA Spoof: Désactivé (mode normal)');
-            return false;
-        }
-
-        // Détecter Safari/iOS pour spoof spécifique
-        const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|CriOS/i.test(navigator.userAgent);
-        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-        
-        // Sur mobile/tablet OU en PWA OU sur Safari iOS, on spoof en desktop Chrome
-        if (ENV_PROFILE.isMobile || ENV_PROFILE.isTablet || IS_PWA || (isSafari && isIOS)) {
-            try {
-                const originalUA = navigator.userAgent;
-                const originalPlatform = navigator.platform;
-                
-                // Spoof userAgent → Desktop Linux Chrome
-                Object.defineProperty(navigator, 'userAgent', {
-                    get: () => UA_SPOOF_CONFIG.targetUA,
-                    configurable: true
-                });
-
-                // Spoof platform → Linux
-                Object.defineProperty(navigator, 'platform', {
-                    get: () => 'Linux x86_64',
-                    configurable: true
-                });
-
-                // Spoof vendor → Google (Chrome)
-                Object.defineProperty(navigator, 'vendor', {
-                    get: () => 'Google Inc.',
-                    configurable: true
-                });
-
-                // Spoof maxTouchPoints → 0 (pas de tactile = desktop)
-                Object.defineProperty(navigator, 'maxTouchPoints', {
-                    get: () => 0,
-                    configurable: true
-                });
-
-                // Spoof standalone → false (pas PWA)
-                if (IS_PWA) {
-                    try {
-                        Object.defineProperty(navigator, 'standalone', {
-                            get: () => false,
-                            configurable: true
-                        });
-                    } catch (e) { /* Safari peut bloquer */ }
-                }
-
-                // Forcer le mode display pour contrer la détection PWA
-                if (UA_SPOOF_CONFIG.forcePWADesktop && window.matchMedia) {
-                    // On ne peut pas vraiment spoofer matchMedia, mais on log l'info
-                    console.log('[Optimizer+] [BETA] PWA Desktop mode forcé');
-                }
-
-                console.log('[Optimizer+] [BETA] ⚡ UA Spoof ACTIF!');
-                console.log('[Optimizer+] [BETA] Original:', originalUA.substring(0, 50) + '...');
-                console.log('[Optimizer+] [BETA] Platform:', originalPlatform, '→ Linux x86_64');
-                if (isSafari) console.log('[Optimizer+] [BETA] Safari → Chrome (Chromium spoof)');
-                if (IS_PWA) console.log('[Optimizer+] [BETA] PWA → Desktop Browser');
-                console.log('[Optimizer+] [BETA] 🎮 120 FPS Mobile Unlock activé!');
-                
-                return true;
-            } catch (e) {
-                console.error('[Optimizer+] [BETA] UA Spoof échoué:', e);
-                return false;
-            }
-        } else {
-            console.log('[Optimizer+] [BETA] UA Spoof: Déjà sur Desktop/TV - pas nécessaire');
-            return false;
-        }
-    }
-
-    // Exécuter le spoof immédiatement (avant que Boosteroid détecte l'appareil)
-    const uaSpoofActive = spoofUserAgent();
-
-    // ===============================================================================
     // SIGNATURE & PROTECTION
-    // ===============================================================================
 
     const SCRIPT_SIGNATURE = {
-        author: 'Derfog',
-        version: '3.7.3-beta',
-        hash: 'BOP373BETA2025', // BETA: UA Spoof 120 FPS Mobile
+        version: SCRIPT_VERSION,
         verify: () => {
-            const meta = document.querySelector('meta[name="optimizer-author"]');
-            if (!meta) {
-                const m = document.createElement('meta');
-                m.name = 'optimizer-author';
-                m.content = 'Derfog';
-                document.head.appendChild(m);
+            // document.head can be null at document-start (Firefox/GM)
+            try {
+                const head = document.head || document.getElementsByTagName('head')[0];
+                if (!head) {
+                    document.addEventListener('DOMContentLoaded', SCRIPT_SIGNATURE.verify, { once: true });
+                    return false;
+                }
+                if (!document.querySelector('meta[name="optimizer-author"]')) {
+                    const m = document.createElement('meta');
+                    m.name = 'optimizer-author';
+                    m.content = 'Derfog';
+                    head.appendChild(m);
+                }
+                return true;
+            } catch (e) {
+                return false;
             }
-            return true;
         }
     };
     SCRIPT_SIGNATURE.verify();
 
-    // ===============================================================================
     // BASE CONFIGURATION (High-End defaults)
-    // ===============================================================================
 
     const CONFIG = {
-        // Résolution forcée - v3.7.2: isAuto=true utilise la résolution native de l'écran
+        // isAuto=true uses the native screen resolution
         resolution: {
             width: 3840,
             height: 2160,
             pixelRatio: 2,
-            isAuto: true // v3.7.2: Mode auto par défaut = résolution native
+            isAuto: true
         },
 
-        // Codec préférences
         codecs: {
-            forceAV1: true,
             forceHEVC: true,
-            forceVP9: true,
-            preferHardware: true
         },
 
-        // Bitrate et qualité
         streaming: {
-            maxBitrate: 50000000,
-            minBitrate: 15000000,
-            targetBitrate: 35000000,
-            bufferSize: 2000,
-            forceHighQuality: true,
-            interceptorEnabled: false  // Opt-in: Stream Interceptor désactivé par défaut
+            maxBitrate: 100000000,
         },
 
-        // PERFORMANCE & LATENCE
         performance: {
             lowLatencyMode: true,
-            targetLatency: 12,
-            jitterBufferTarget: 40,
             jitterBufferMax: 80,
-            decodeLatencyTarget: 4,
-            prioritizeFramerate: true,
-            gpuAcceleration: true,
-            reducedFiltersInGame: true,
-            // v3.6.1: maxFiltersActive dynamique selon profil matériel
-            maxFiltersActive: ENV_PROFILE.isHighEnd ? 5 : (ENV_PROFILE.isMidRange ? 3 : 2),
-            disableLogsInGame: true,
-            adaptiveQuality: true,
-            fpsThreshold: 55,
-            streamInterceptor: true  // Opt-in: intercepte configs pour forcer HW decode
+            playoutDelayHintMs: 30, // Receive buffer target (ms): mouse latency vs stutter. Competitive: 20, comfort: 50
         },
 
-        // Video Enhancer
         enhancer: {
-            enabled: false, // v3.7.2: Désactivé par défaut - l'utilisateur choisit
+            enabled: true,
             sharpness: 0.45,
-            contrast: 1.0,   // Valeurs neutres
-            saturation: 1.0,
-            brightness: 1.0
+            contrast: 1.08,
+            saturation: 1.05,
+            brightness: 1.02
         },
 
-        // Filtres vidéo avancés
         filters: {
-            enabled: false, // v3.7.2: Désactivé par défaut - l'utilisateur choisit
-            preset: null,   // v3.7.2: Aucun preset actif par défaut
+            enabled: false, // Off by default: the user opts in
+            preset: null,
+            performanceMode: true, // Lighter shader path (fast denoise, no clarity pass)
             usm: { enabled: false, amount: 0.35, radius: 0.9, threshold: 0.04 },
             cas: { enabled: false, sharpness: 0.45 },
             clarity: { enabled: false, amount: 0.2 },
@@ -334,7 +195,6 @@
             deband: { enabled: false, strength: 0.3 }
         },
 
-        // DRM Bypass
         drm: {
             forceDolbyVision: false,
             forceHDCP: false,
@@ -342,35 +202,61 @@
             forceALL: false
         },
 
-        // Display & Ultrawide (v3.6)
         display: {
-            ultrawideMode: false,       // Ultrawide stretch mode toggle
-            autoDetect: true,           // Auto-activer ultrawide si écran 21:9+
-            performanceMode: false      // Mode performance: désactive les filtres lourds
+            stretchMode: false,         // Stretch the video to remove black bars
         },
 
-        // [BETA] UA Spoofing pour 120 FPS Mobile (v3.7.3-beta)
-        uaSpoof: {
-            enabled: false,             // BETA: Désactivé par défaut - Activer pour tester 120 FPS sur mobile
-            spoofMobileToDesktop: true, // Faire passer le mobile pour un desktop Linux
-            targetUA: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
-        },
-
-        // Langue (auto-détectée ou choisie)
         language: 'auto'
     };
 
-    // Valeurs par défaut pour le Reset (copie immutable)
+    // Real screen values, captured before any resolution hook
+    const _realDprDescriptor = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+    const _realScreen = {
+        width: window.screen?.width || 1920,
+        height: window.screen?.height || 1080,
+        availWidth: window.screen?.availWidth || 1920,
+        availHeight: window.screen?.availHeight || 1080,
+        pixelRatio: window.devicePixelRatio || 1
+    };
+
+    // SDR STREAM — the page is told the display is SDR, on every screen.
+    // WebGPU converts PQ / BT.2020 frames without Chrome's HDR tone mapping: measured
+    // against the native video path, a saturated red comes out at 234 instead of 164.
+    // SDR frames match the native path exactly, so an SDR stream is the only one this
+    // pipeline reproduces faithfully.
+    (function requestSdrStream() {
+        const originalMatchMedia = window.matchMedia;
+        window.matchMedia = function (query) {
+            if (typeof query === 'string') {
+                const clean = query.replace(/\s+/g, '').toLowerCase();
+                if (clean.includes('dynamic-range:high') || clean.includes('color-gamut:p3') || clean.includes('color-gamut:rec2020')) {
+                    return {
+                        matches: false,
+                        media: query,
+                        onchange: null,
+                        addListener: () => {},
+                        removeListener: () => {},
+                        addEventListener: () => {},
+                        removeEventListener: () => {},
+                        dispatchEvent: () => false
+                    };
+                }
+            }
+            return originalMatchMedia.call(this, query);
+        };
+    })();
+
+    // Defaults used by the Reset button
     const DEFAULT_CONFIG = {
         resolution: { width: 3840, height: 2160, pixelRatio: 2, isAuto: true },
-        enhancer: { enabled: true, sharpness: 0.45, contrast: 1.04, saturation: 1.01, brightness: 1.0 },
+        enhancer: { enabled: true, sharpness: 0.45, contrast: 1.08, saturation: 1.05, brightness: 1.02 },
         filters: {
             enabled: true, preset: 'default',
-            usm: { enabled: true, amount: 0.35, radius: 0.9, threshold: 0.04 },
-            cas: { enabled: true, sharpness: 0.45 },
-            clarity: { enabled: false, amount: 0.2 },
-            denoise: { enabled: false, strength: 0.2 },
-            vibrance: { enabled: false, amount: 0.2 },
+            usm: { enabled: true, amount: 0.3, radius: 0.9, threshold: 0.04 },
+            cas: { enabled: true, sharpness: 0.6 },
+            clarity: { enabled: false, amount: 0.3 },
+            denoise: { enabled: false, strength: 0.15 },
+            vibrance: { enabled: false, amount: 0.15 },
             gamma: { enabled: false, value: 1.0 },
             exposure: { enabled: false, value: 0 },
             deband: { enabled: false, strength: 0.3 }
@@ -378,25 +264,19 @@
         language: 'auto'
     };
 
-    // ===============================================================================
-    // AXE 1: ADAPTIVE CONFIG BUILDER
-    // ===============================================================================
+    // ADAPTIVE CONFIG BUILDER
 
     function buildAdaptiveConfig(baseConfig, envProfile) {
         const cfg = JSON.parse(JSON.stringify(baseConfig));
 
-        // -------------------------------------------------------------------------
         // Tier 1 : Low-End / Slow Network
-        // -------------------------------------------------------------------------
-        if (envProfile.isLowEnd || envProfile.isSlowNetwork) {
+        // Network API false positives must not downgrade high-end desktops
+        if (envProfile.isLowEnd || (envProfile.isSlowNetwork && !envProfile.isHighEnd)) {
             console.log('[Optimizer+] Adapting to Low-End/Slow profile');
-            cfg.resolution = { width: 1920, height: 1080, pixelRatio: 1, isAuto: false };
+            cfg.resolution = { width: 1920, height: 1080, pixelRatio: 1, isAuto: true };
             cfg.streaming = {
-                maxBitrate: 15000000, minBitrate: 8000000, targetBitrate: 12000000,
-                bufferSize: 3000, forceHighQuality: true
+                maxBitrate: 100000000,
             };
-            cfg.performance.maxFiltersActive = 2;
-            cfg.performance.adaptiveQuality = true;
             cfg.filters.usm.amount = 0.25;
             cfg.filters.cas.sharpness = 0.35;
             cfg.filters.clarity.enabled = false;
@@ -404,399 +284,66 @@
             cfg.filters.vibrance.enabled = false;
             cfg.filters.deband.enabled = false;
         }
-        // -------------------------------------------------------------------------
         // Tier 2 : Mid-Range
-        // -------------------------------------------------------------------------
         else if (envProfile.isMidRange) {
             console.log('[Optimizer+] Adapting to Mid-Range profile');
             cfg.resolution = { width: 2560, height: 1440, pixelRatio: 1, isAuto: false };
             cfg.streaming = {
-                maxBitrate: 30000000, minBitrate: 12000000, targetBitrate: 25000000,
-                bufferSize: 2500, forceHighQuality: true
+                maxBitrate: 100000000,
             };
-            cfg.performance.maxFiltersActive = 4;
             cfg.filters.usm.amount = 0.35;
             cfg.filters.cas.sharpness = 0.45;
             cfg.filters.clarity.enabled = true;
             cfg.filters.deband.enabled = true;
         }
-        // Tier 3 : High-End = config par défaut (isAuto: true)
+        // Tier 3 : High-End = default config
 
-        // -------------------------------------------------------------------------
         // Device-specific overrides
-        // -------------------------------------------------------------------------
-        if (envProfile.isMobile || envProfile.isTablet) {
-            cfg.streaming.maxBitrate = Math.min(cfg.streaming.maxBitrate, 20000000);
-            cfg.streaming.targetBitrate = Math.min(cfg.streaming.targetBitrate, 18000000);
-            cfg.performance.maxFiltersActive = Math.min(cfg.performance.maxFiltersActive, 3);
-        }
-
-        if (envProfile.isTV) {
-            cfg.performance.lowLatencyMode = true;
-            cfg.performance.targetLatency = 10;
-            cfg.performance.jitterBufferTarget = 30;
-        }
-
         if (envProfile.isSmallScreen) {
             cfg.resolution.width = Math.min(cfg.resolution.width, 1920);
             cfg.resolution.height = Math.min(cfg.resolution.height, 1080);
         }
 
-        if (envProfile.isSafari) {
-            cfg.performance.preferHardware = false;
-        }
-
         if (envProfile.saveData) {
-            cfg.streaming.maxBitrate = Math.round(cfg.streaming.maxBitrate * 0.7);
             cfg.filters.enabled = false;
         }
 
         return cfg;
     }
 
-    // Appliquer la configuration adaptative
     const EFFECTIVE_CONFIG = buildAdaptiveConfig(CONFIG, ENV_PROFILE);
-    // Remplacer CONFIG par EFFECTIVE_CONFIG pour le reste du script
     Object.assign(CONFIG, EFFECTIVE_CONFIG);
     console.log('[Optimizer+] Adaptive config applied:',
         `${CONFIG.resolution.width}x${CONFIG.resolution.height}`,
-        `@ ${Math.round(CONFIG.streaming.maxBitrate/1000000)}Mbps`
+        `@ ${Math.round(CONFIG.streaming.maxBitrate / 1000000)}Mbps`
     );
 
-    // ===============================================================================
-    // AXE 3: FILTER TIERING SYSTEM
-    // ===============================================================================
-
-    const FilterTiers = {
-        // v3.7.2: OFF = aucun filtre activé par défaut, l'utilisateur choisit
-        OFF: {
-            name: 'Désactivé',
-            filters: {
-                usm: { enabled: false }, cas: { enabled: false },
-                clarity: { enabled: false }, denoise: { enabled: false },
-                vibrance: { enabled: false }, gamma: { enabled: false },
-                exposure: { enabled: false }, deband: { enabled: false }
-            },
-            enhancer: { contrast: 1.0, saturation: 1.0, brightness: 1.0 }
-        },
-        SAFE: {
-            name: 'Safe Mode',
-            filters: {
-                usm: { enabled: false }, cas: { enabled: false },
-                clarity: { enabled: false }, denoise: { enabled: false },
-                vibrance: { enabled: false }, gamma: { enabled: false },
-                exposure: { enabled: false }, deband: { enabled: false }
-            },
-            enhancer: { contrast: 1.02, saturation: 1.01, brightness: 1.0 }
-        },
-        LIGHT: {
-            name: 'Light',
-            filters: {
-                usm: { enabled: true, amount: 0.25 }, cas: { enabled: true, sharpness: 0.35 },
-                clarity: { enabled: false }, denoise: { enabled: false },
-                vibrance: { enabled: false }, gamma: { enabled: false },
-                exposure: { enabled: false }, deband: { enabled: false }
-            },
-            enhancer: { contrast: 1.04, saturation: 1.01, brightness: 1.0 }
-        },
-        NORMAL: {
-            name: 'Balanced',
-            filters: {
-                usm: { enabled: true, amount: 0.35 }, cas: { enabled: true, sharpness: 0.45 },
-                clarity: { enabled: true, amount: 0.2 }, denoise: { enabled: false },
-                vibrance: { enabled: false }, gamma: { enabled: false },
-                exposure: { enabled: false }, deband: { enabled: true, strength: 0.2 }
-            },
-            enhancer: { contrast: 1.04, saturation: 1.01, brightness: 1.0 }
-        },
-        ULTRA: {
-            name: 'Ultra',
-            filters: {
-                usm: { enabled: true, amount: 0.45 }, cas: { enabled: true, sharpness: 0.55 },
-                clarity: { enabled: true, amount: 0.3 }, denoise: { enabled: true, strength: 0.15 },
-                vibrance: { enabled: true, amount: 0.15 }, gamma: { enabled: false },
-                exposure: { enabled: false }, deband: { enabled: true, strength: 0.3 }
-            },
-            enhancer: { contrast: 1.05, saturation: 1.02, brightness: 1.0 }
-        }
-    };
-
-    // v3.7.2: Par défaut, aucun preset actif - l'utilisateur choisit
-    function getInitialFilterTier(envProfile) {
-        // Retourner OFF par défaut - l'utilisateur active manuellement le preset souhaité
-        return 'OFF';
-    }
-
-    const FilterState = {
-        currentTier: getInitialFilterTier(ENV_PROFILE),
-        adaptiveEnabled: CONFIG.performance.adaptiveQuality,
-        fpsHistory: [],
-        fpsThreshold: CONFIG.performance.fpsThreshold || 55,
-        lastAutoChange: 0, // v3.6.2: Cooldown pour éviter boucle infinie
-
-        updateTierBasedOnFps(currentFps) {
-            if (!this.adaptiveEnabled) return;
-            // v3.6.2: Cooldown de 10 secondes entre changements auto
-            if (Date.now() - this.lastAutoChange < 10000) return;
-            this.fpsHistory.push(currentFps);
-            // v3.6.4: Limiter à 20 éléments pour éviter memory leak
-            if (this.fpsHistory.length > 20) this.fpsHistory.shift();
-            const avgFps = this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
-
-            // v3.6.2: Auto-activation du Performance Mode si FPS critiques
-            if (avgFps < this.fpsThreshold && !CONFIG.display.performanceMode) {
-                console.warn('[Optimizer+] [!] FPS critique (' + Math.round(avgFps) + '), activation auto du Performance Mode');
-                CONFIG.display.performanceMode = true;
-
-                // Désactiver les filtres lourds
-                CONFIG.filters.clarity.enabled = false;
-                CONFIG.filters.denoise.enabled = false;
-                CONFIG.filters.deband.enabled = false;
-                CONFIG.performance.gpuAcceleration = false;
-
-                // Forcer le tier SAFE
-                this.setFilterTier('SAFE');
-
-                // Mettre à jour les filtres
-                if (typeof videoEnhancer !== 'undefined' && videoEnhancer.updateFilterString) {
-                    videoEnhancer.updateFilterString();
-                    videoEnhancer.applyFiltersToAllVideos();
-                }
-
-                // Notification utilisateur
-                if (typeof showNotification === 'function') {
-                    showNotification(' Performance Mode auto-activé (FPS < ' + this.fpsThreshold + ')');
-                }
-
-                // Mettre à jour le toggle UI si présent
-                const toggle = document.getElementById('optimizer-performance-mode');
-                if (toggle) toggle.checked = true;
-
-                return; // Ne pas continuer le calcul de tier
-            }
-
-            const newTier = this.calculateOptimalTier(avgFps);
-            if (newTier !== this.currentTier) {
-                this.setFilterTier(newTier);
-                this.lastAutoChange = Date.now(); // v3.6.2: Reset cooldown
-            }
-        },
-
-        calculateOptimalTier(avgFps) {
-            if (avgFps >= this.fpsThreshold) {
-                if (this.currentTier === 'SAFE') return 'LIGHT';
-                if (this.currentTier === 'LIGHT') return 'NORMAL';
-                if (this.currentTier === 'NORMAL') return 'ULTRA';
-            } else if (avgFps < this.fpsThreshold * 0.7) {
-                if (this.currentTier === 'ULTRA') return 'NORMAL';
-                if (this.currentTier === 'NORMAL') return 'LIGHT';
-                if (this.currentTier === 'LIGHT') return 'SAFE';
-            }
-            return this.currentTier;
-        },
-
-        // v3.7.0: Pending tier pour retry si videoEnhancer n'existe pas encore
-        _pendingTier: null,
-        _retryCount: 0,
-        _maxRetries: 50, // 50 * 100ms = 5 secondes max
-
-        setFilterTier(tierName) {
-            if (tierName === this.currentTier) return;
-            const tier = FilterTiers[tierName];
-            if (!tier) return;
-
-            console.log(`[Optimizer+] Filter tier: ${this.currentTier} -> ${tierName}`);
-            this.currentTier = tierName;
-
-            // Si OFF, désactiver tous les filtres et ne rien appliquer
-            if (tierName === 'OFF') {
-                Object.keys(tier.filters).forEach(filterName => {
-                    if (CONFIG.filters[filterName]) {
-                        CONFIG.filters[filterName].enabled = false;
-                    }
-                });
-                Object.assign(CONFIG.enhancer, tier.enhancer);
-                
-                // Retirer les filtres des vidéos existantes
-                if (typeof videoEnhancer !== 'undefined' && videoEnhancer.removeFiltersFromAllVideos) {
-                    videoEnhancer.removeFiltersFromAllVideos();
-                } else {
-                    // Fallback: retirer manuellement les filtres
-                    document.querySelectorAll('video').forEach(video => {
-                        video.style.filter = '';
-                    });
-                }
-                console.log('[Optimizer+] [OK] Tous les filtres désactivés');
-                return;
-            }
-
-            // Appliquer les filtres du tier en mémoire
-            Object.keys(tier.filters).forEach(filterName => {
-                if (CONFIG.filters[filterName]) {
-                    Object.assign(CONFIG.filters[filterName], tier.filters[filterName]);
-                }
-            });
-            Object.assign(CONFIG.enhancer, tier.enhancer);
-
-            // v3.7.0: Système de retry robuste
-            this._pendingTier = tierName;
-            this._retryCount = 0;
-            this._applyWithRetry();
-        },
-
-        // v3.7.0: Appliquer les filtres avec retry automatique
-        _applyWithRetry() {
-            if (!this._pendingTier) return;
-
-            if (typeof videoEnhancer !== 'undefined' && videoEnhancer.updateFilterString) {
-                // videoEnhancer existe, appliquer les filtres
-                videoEnhancer.updateFilterString();
-                videoEnhancer.updateSVGFilters();
-                videoEnhancer.applyFiltersToAllVideos();
-                
-                // Valider que les filtres sont appliqués
-                setTimeout(() => this._validateFiltersApplied(), 200);
-                
-                this._pendingTier = null;
-                this._retryCount = 0;
-                console.log('[Optimizer+] [OK] Filters applied successfully');
-            } else if (this._retryCount < this._maxRetries) {
-                // Retry après 100ms
-                this._retryCount++;
-                setTimeout(() => this._applyWithRetry(), 100);
-                if (this._retryCount === 1) {
-                    console.log('[Optimizer+] videoEnhancer not ready, retrying...');
-                }
-            } else {
-                // Timeout après 5 secondes
-                console.warn('[Optimizer+] [!] Failed to apply filters after 5s - videoEnhancer not available');
-                this._pendingTier = null;
-                this._retryCount = 0;
-            }
-        },
-
-        // v3.7.0: Valider que les filtres sont vraiment appliqués
-        _validateFiltersApplied() {
-            const videos = document.querySelectorAll('video');
-            if (videos.length === 0) return; // Pas de vidéo encore
-
-            let allValid = true;
-            videos.forEach(video => {
-                const hasFilter = video.style.filter && video.style.filter.includes('url(#optimizer-');
-                const svgExists = document.getElementById('optimizer-usm-filter');
-                if (!hasFilter && !svgExists) {
-                    allValid = false;
-                }
-            });
-
-            if (!allValid && this._retryCount < 10) {
-                // Retry l'application
-                this._retryCount++;
-                if (typeof videoEnhancer !== 'undefined') {
-                    videoEnhancer.applyFiltersToAllVideos();
-                }
-                setTimeout(() => this._validateFiltersApplied(), 300);
-            }
-        }
-    };
-
-    console.log('[Optimizer+] Initial filter tier:', FilterState.currentTier);
-
-    // ===============================================================================
-    // AXE 3: FPS MONITOR CLASS
-    // ===============================================================================
-
-    class FpsMonitor {
-        constructor() {
-            this.fps = 0;
-            this.lastTime = performance.now();
-            this.frameCount = 0;
-            this.animationFrameId = null;
-            this.enabled = false;
-            this.callbacks = [];
-        }
-
-        start() {
-            if (this.enabled) return;
-            this.enabled = true;
-
-            const loop = () => {
-                this.frameCount++;
-                const now = performance.now();
-                const elapsed = now - this.lastTime;
-
-                // v3.6.1: Intervalle adaptatif - 1000ms si fps < 55, sinon 500ms
-                const updateInterval = this.fps > 0 && this.fps < 55 ? 1000 : 500;
-
-                if (elapsed >= updateInterval) {
-                    this.fps = Math.round((this.frameCount * 1000) / elapsed);
-                    this.frameCount = 0;
-                    this.lastTime = now;
-
-                    // Adapter le tier de filtres
-                    FilterState.updateTierBasedOnFps(this.fps);
-
-                    // Exécuter les callbacks
-                    this.callbacks.forEach(cb => cb(this.fps));
-                }
-
-                if (this.enabled) {
-                    this.animationFrameId = requestAnimationFrame(loop);
-                }
-            };
-
-            this.animationFrameId = requestAnimationFrame(loop);
-            console.log('[Optimizer+] FPS monitor started');
-        }
-
-        stop() {
-            if (!this.enabled) return;
-            this.enabled = false;
-            if (this.animationFrameId) {
-                cancelAnimationFrame(this.animationFrameId);
-                this.animationFrameId = null;
-            }
-            console.log('[Optimizer+] FPS monitor stopped');
-        }
-
-        onFpsUpdate(callback) {
-            this.callbacks.push(callback);
-        }
-
-        getFps() {
-            return this.fps;
-        }
-    }
-
-    // Instance globale du FPS Monitor (sera démarré en streaming)
-    let fpsMonitor = null;
-
-    // ===============================================================================
-    // v3.5 AXE 1: STREAM INTERCEPTOR - Force HW Decode + GPU Acceleration
-    // Inspiré de BetterXCloud pattern pour intercepter les configs streaming
-    // ===============================================================================
+    // STREAM INTERCEPTOR - Force HW decode on the session config (Better xCloud pattern)
 
     const StreamInterceptor = {
         originalFetch: null,
         enabled: false,
 
-        /**
-         * Intercepter les réponses de configuration pour forcer HW decode
-         */
         enable() {
             if (this.enabled) return;
             this.enabled = true;
 
-            // Sauvegarder le fetch original
             this.originalFetch = window.fetch;
             const self = this;
-
-            window.fetch = async function(...args) {
+            window.fetch = async function (...args) {
                 const request = args[0];
                 const url = typeof request === 'string' ? request : request?.url;
 
-                // Intercepter /configuration pour forcer décodage HW
-                if (url && (url.includes('/configuration') || url.includes('/session') || url.includes('/streaming'))) {
+                // Only intercept Boosteroid API config endpoints, never /streaming (the page URL itself)
+                // Restricted to boosteroid.com hosts: third-party URLs containing /configuration are left alone
+                let isBoosteroidApi = false;
+                if (url && (url.includes('/configuration') || url.includes('/session/config'))) {
+                    try {
+                        const h = new URL(url, location.href).hostname;
+                        isBoosteroidApi = h === 'boosteroid.com' || h.endsWith('.boosteroid.com');
+                    } catch (e) {}
+                }
+                if (isBoosteroidApi) {
                     try {
                         const response = await self.originalFetch.apply(window, args);
 
@@ -805,8 +352,7 @@
                             try {
                                 const config = await clonedResponse.json();
 
-                                // Force HW decoding + GPU accel
-                                if (config) {
+                                if (config && typeof config === 'object') {
                                     if (!config.clientStreamingConfigOverrides) {
                                         config.clientStreamingConfigOverrides = '{}';
                                     }
@@ -818,30 +364,30 @@
                                         overrides = {};
                                     }
 
-                                    // [*] Force codec le plus performant
+                                    // Hardware decoding hints
                                     overrides.videoConfiguration = overrides.videoConfiguration || {};
                                     overrides.videoConfiguration.enableHardwareDecoding = true;
                                     overrides.videoConfiguration.hardwareDecoderProfile = 'high';
                                     overrides.videoConfiguration.enableRtcStatsCollection = true;
-                                    overrides.videoConfiguration.preferredCodec = 'av1'; // AV1 si supporté
-
-                                    // Force high bitrate settings
-                                    overrides.bitrateConfiguration = overrides.bitrateConfiguration || {};
-                                    overrides.bitrateConfiguration.maxBitrate = CONFIG.streaming.maxBitrate;
-                                    overrides.bitrateConfiguration.targetBitrate = CONFIG.streaming.targetBitrate;
 
                                     config.clientStreamingConfigOverrides = JSON.stringify(overrides);
 
-                                    console.log('[Optimizer+] [OK] StreamInterceptor: Config enrichie avec HW decode + codec optimisé');
+                                    // Rebuild the Response with correct headers
+                                    const newBody = JSON.stringify(config);
+                                    const newHeaders = new Headers(response.headers);
+                                    newHeaders.set('Content-Length', new Blob([newBody]).size.toString());
+                                    newHeaders.set('Content-Type', 'application/json');
 
-                                    return new Response(JSON.stringify(config), {
+                                    console.log('[Optimizer+] [OK] StreamInterceptor: config enriched (HW decode)');
+
+                                    return new Response(newBody, {
                                         status: response.status,
                                         statusText: response.statusText,
-                                        headers: response.headers
+                                        headers: newHeaders
                                     });
                                 }
                             } catch (parseError) {
-                                // Pas du JSON, retourner la réponse originale
+                                // Not JSON — return original response untouched
                             }
                         }
                         return response;
@@ -868,420 +414,99 @@
         }
     };
 
-    // ===============================================================================
-    // v3.6 AXE 6: ULTRAWIDE & ASPECT RATIO EXPANSION
-    // Full-screen support for 21:9, 32:9+ displays - Game-changing feature!
-    // ===============================================================================
+    // Security helpers (XSS + prototype pollution hardening)
+    const BLOCKED_MERGE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
-    const UltrawideSupport = {
-        enabled: false,
-        styleElement: null,
-        resizeHandler: null,
+    function isPlainObject(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
 
-        /**
-         * Calculer l'aspect ratio de l'écran
-         */
-        getScreenAspectRatio() {
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            return (width / height).toFixed(2);
-        },
-
-        /**
-         * Déterminer si l'écran est "ultrawide" (> 1.7 ratio)
-         */
-        isUltrawideScreen() {
-            const ratio = parseFloat(this.getScreenAspectRatio());
-            return ratio > 1.7; // 16:9 = 1.78, 21:9 = 2.33, 32:9 = 3.56
-        },
-
-        /**
-         * Obtenir les infos de l'écran pour logging
-         */
-        getScreenInfo() {
-            const ratio = parseFloat(this.getScreenAspectRatio());
-            let screenType = '16:9 (Standard)';
-
-            if (ratio >= 3.4) screenType = '32:9 (Super Ultrawide)';
-            else if (ratio >= 2.2) screenType = '21:9 (Ultrawide)';
-            else if (ratio >= 1.8) screenType = '16:10 (Widescreen)';
-            else if (ratio <= 1.3) screenType = 'Tablet / Vertical';
-
-            return {
-                ratio: ratio.toFixed(2),
-                type: screenType,
-                width: window.innerWidth,
-                height: window.innerHeight,
-                isUltrawide: this.isUltrawideScreen()
-            };
-        },
-
-        /**
-         * CSS pour le mode ultrawide - ÉTIREMENT INTELLIGENT
-         * Garde les filtres vidéo (sharpness, contrast, etc.) fonctionnels
-         * PRÉSERVE les fenêtres flottantes de Boosteroid
-         */
-        getUltrawideCSS() {
-            return `
-                /* =================================================================== */
-                /* ULTRAWIDE MODE v3.6.0 - ÉTIREMENT (object-fit: fill)                */
-                /* L'image 16:9 est ÉTIRÉE horizontalement pour remplir le 21:9/32:9   */
-                /* PAS de zoom, PAS de crop - juste un étirement des côtés             */
-                /* =================================================================== */
-
-                html.optimizer-ultrawide-mode,
-                html.optimizer-ultrawide-mode body {
-                    overflow: hidden !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    background: #000 !important;
-                }
-
-                /* ================================================================ */
-                /* VIDÉO: object-fit: fill = ÉTIRE pour remplir (pas de zoom)       */
-                /* ================================================================ */
-                html.optimizer-ultrawide-mode video {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
-                    object-fit: fill !important;
-                    background: #000 !important;
-                }
-
-                /* Canvas (WebRTC) - même traitement */
-                html.optimizer-ultrawide-mode canvas {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
-                }
-
-                /* Conteneurs stream */
-                html.optimizer-ultrawide-mode [class*="player"],
-                html.optimizer-ultrawide-mode [class*="Player"],
-                html.optimizer-ultrawide-mode [class*="stream"],
-                html.optimizer-ultrawide-mode [class*="Stream"] {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    overflow: visible !important;
-                }
-
-                /* Fenêtres flottantes Boosteroid - toujours au-dessus */
-                html.optimizer-ultrawide-mode [class*="modal"],
-                html.optimizer-ultrawide-mode [class*="Modal"],
-                html.optimizer-ultrawide-mode [class*="popup"],
-                html.optimizer-ultrawide-mode [class*="Popup"],
-                html.optimizer-ultrawide-mode [class*="dialog"],
-                html.optimizer-ultrawide-mode [class*="Dialog"],
-                html.optimizer-ultrawide-mode [class*="menu"],
-                html.optimizer-ultrawide-mode [class*="Menu"],
-                html.optimizer-ultrawide-mode [class*="panel"],
-                html.optimizer-ultrawide-mode [class*="Panel"],
-                html.optimizer-ultrawide-mode [class*="settings"],
-                html.optimizer-ultrawide-mode [class*="Settings"],
-                html.optimizer-ultrawide-mode [role="dialog"],
-                html.optimizer-ultrawide-mode [role="menu"] {
-                    z-index: 100000 !important;
-                }
-
-                /* Optimizer UI */
-                html.optimizer-ultrawide-mode #optimizer-section {
-                    z-index: 100001 !important;
-                }
-
-                /* Indicateur */
-                html.optimizer-ultrawide-mode::after {
-                    content: 'ULTRAWIDE';
-                    position: fixed;
-                    top: 10px;
-                    right: 10px;
-                    background: rgba(0, 163, 255, 0.9);
-                    color: white;
-                    padding: 5px 10px;
-                    border-radius: 4px;
-                    font-size: 11px;
-                    font-weight: bold;
-                    z-index: 100002;
-                    pointer-events: none;
-                    animation: ultrawide-fade 3s ease-out forwards;
-                }
-
-                @keyframes ultrawide-fade {
-                    0%, 70% { opacity: 1; }
-                    100% { opacity: 0; }
-                }
-            `;
-        },
-
-        /**
-         * Activer le mode ultrawide
-         */
-        enable() {
-            if (this.enabled) return;
-
-            console.log('[Optimizer+] Ultrawide mode: ENABLING');
-            const screenInfo = this.getScreenInfo();
-
-            this.enabled = true;
-            CONFIG.display.ultrawideMode = true;
-
-            // v3.6.1: "Cheap mode" - Désactiver les filtres lourds si prioritizeFramerate
-            if (CONFIG.performance.prioritizeFramerate || CONFIG.display.performanceMode) {
-                console.log('[Optimizer+] Ultrawide: Mode performance - désactivation filtres lourds');
-                CONFIG.filters.clarity.enabled = false;
-                CONFIG.filters.denoise.enabled = false;
-                CONFIG.filters.deband.enabled = false;
-                if (typeof videoEnhancer !== 'undefined' && videoEnhancer.updateFilterString) {
-                    videoEnhancer.updateFilterString();
-                    videoEnhancer.applyFiltersToAllVideos();
-                }
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => {
+            switch (char) {
+                case '&': return '&amp;';
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '"': return '&quot;';
+                case '\'': return '&#39;';
+                default: return char;
             }
+        });
+    }
 
-            // Injecter le CSS ultrawide
-            if (!this.styleElement) {
-                this.styleElement = document.createElement('style');
-                this.styleElement.id = 'optimizer-ultrawide-styles';
-                this.styleElement.textContent = this.getUltrawideCSS();
-                document.head.appendChild(this.styleElement);
-            }
-
-            // Ajouter la classe de base
-            document.documentElement.classList.add('optimizer-ultrawide-mode');
-
-            console.log('[Optimizer+] [OK] Ultrawide mode activated');
-            console.log(`[Optimizer+] Screen: ${screenInfo.width}x${screenInfo.height} (${screenInfo.type})`);
-
-            // Notifier
-            if (typeof showNotification === 'function') {
-                showNotification(`Ultrawide: ${screenInfo.type}`);
-            }
-
-            // Écouter les changements de taille de fenêtre
-            this.resizeHandler = () => this.onWindowResize();
-            window.addEventListener('resize', this.resizeHandler);
-
-            // Sauvegarder la config
-            if (typeof Storage !== 'undefined' && Storage.set) {
-                Storage.set('config', CONFIG);
-            }
-        },
-
-        /**
-         * Désactiver le mode ultrawide
-         */
-        disable() {
-            if (!this.enabled) return;
-
-            console.log('[Optimizer+] Ultrawide mode: DISABLING');
-            this.enabled = false;
-            CONFIG.display.ultrawideMode = false;
-
-            // Retirer la classe CSS
-            document.documentElement.classList.remove('optimizer-ultrawide-mode');
-
-            // Retirer le style element
-            if (this.styleElement && this.styleElement.parentNode) {
-                this.styleElement.parentNode.removeChild(this.styleElement);
-                this.styleElement = null;
-            }
-
-            // Retirer le listener resize
-            if (this.resizeHandler) {
-                window.removeEventListener('resize', this.resizeHandler);
-                this.resizeHandler = null;
-            }
-
-            console.log('[Optimizer+] [OK] Ultrawide mode deactivated');
-            if (typeof showNotification === 'function') {
-                showNotification('Ultrawide désactivé');
-            }
-
-            // Sauvegarder la config
-            if (typeof Storage !== 'undefined' && Storage.set) {
-                Storage.set('config', CONFIG);
-            }
-        },
-
-        /**
-         * Handle window resize
-         */
-        onWindowResize() {
-            // Rien à faire, le CSS gère tout
-        },
-
-        /**
-         * Toggle ultrawide on/off
-         */
-        toggle() {
-            if (this.enabled) {
-                this.disable();
-            } else {
-                this.enable();
-            }
-            return this.enabled;
-        }
-    };
-
-    // v3.6.4: Suppression de l'exposition globale pour raisons de sécurité (SEC-01)
-    // UltrawideSupport reste accessible uniquement dans le scope de l'IIFE
-
-    // ===============================================================================
-    // v3.7.1 SMART RESOLUTION DETECTOR - Auto-détection écran et résolutions adaptées
-    // UPSCALE ONLY: Ne propose que des résolutions >= native
-    // ===============================================================================
+    // SMART RESOLUTION DETECTOR - Screen detection and matching resolutions
 
     const SmartResolutionDetector = {
-        // Cache des résultats - invalidé à chaque nouvelle version
         _cache: null,
         _cacheTime: 0,
-        _version: '3.7.2', // Incrémenté pour invalider le cache (Smart Quality)
-        CACHE_TTL: 5000, // 5 secondes
-        
-        /**
-         * Invalider le cache manuellement
-         */
-        invalidateCache() {
-            this._cache = null;
-            this._cacheTime = 0;
-            console.log('[Optimizer+] Cache résolution invalidé');
-        },
+        CACHE_TTL: 5000,
 
-        /**
-         * Obtenir les dimensions de l'écran actuel (support multi-moniteurs)
-         * Utilise getScreenDetails API si disponible (Chrome 100+)
-         * Fallback sur screen.width/height sinon
-         * @returns {Promise<Object>} Dimensions de l'écran
-         */
-        async getScreenDetailsAsync() {
-            try {
-                // Chrome 100+ : Window Management API
-                if ('getScreenDetails' in window) {
-                    const screenDetails = await window.getScreenDetails();
-                    const currentScreen = screenDetails.currentScreen;
-                    
-                    if (currentScreen) {
-                        console.log(`[Optimizer+] Screen detection: ${screenDetails.screens.length} écran(s) détecté(s)`);
-                        return {
-                            width: currentScreen.width,
-                            height: currentScreen.height,
-                            availWidth: currentScreen.availWidth || currentScreen.width,
-                            availHeight: currentScreen.availHeight || currentScreen.height,
-                            devicePixelRatio: currentScreen.devicePixelRatio || window.devicePixelRatio || 1,
-                            isMultiMonitor: screenDetails.screens.length > 1,
-                            screenLabel: currentScreen.label || 'Primary'
-                        };
-                    }
-                }
-            } catch (e) {
-                // Permission refusée ou API non supportée
-                console.log('[Optimizer+] getScreenDetails non disponible, fallback screen.width');
-            }
-            
-            // Fallback standard
-            return this.getScreenDimensions();
-        },
-
-        /**
-         * Obtenir les dimensions réelles de l'écran (hardware natif)
-         * Fix: Utilise screen.width/height pour éviter les bugs de zoom navigateur
-         */
         getScreenDimensions() {
-            // Heuristique: Si window est très différent de screen, user peut être sur autre écran
-            const screenW = window.screen.width || window.screen.availWidth || window.innerWidth;
-            const screenH = window.screen.height || window.screen.availHeight || window.innerHeight;
+            // _realScreen is captured at startup, before any hook
             const windowW = window.innerWidth;
             const windowH = window.innerHeight;
-            
-            // Si fenêtre plein écran sur écran différent, innerWidth peut être plus fiable
-            let width = screenW;
-            let height = screenH;
-            
-            // Détection heuristique: fenêtre plus grande que l'écran détecté = probablement autre écran
-            if (windowW > screenW * 1.1 || windowH > screenH * 1.1) {
+
+            let width = _realScreen.width;
+            let height = _realScreen.height;
+
+            // Window larger than the screen: probably on an external display
+            if (windowW > _realScreen.width * 1.1 || windowH > _realScreen.height * 1.1) {
                 console.log('[Optimizer+] Heuristique: fenêtre sur écran externe détectée');
                 width = windowW;
                 height = windowH;
             }
-            
+
             return {
                 width: width,
                 height: height,
-                availWidth: window.screen.availWidth || width,
-                availHeight: window.screen.availHeight || height,
-                devicePixelRatio: window.devicePixelRatio || 1,
+                availWidth: _realScreen.availWidth,
+                availHeight: _realScreen.availHeight,
+                devicePixelRatio: _realScreen.pixelRatio,
                 isMultiMonitor: false,
                 screenLabel: 'Default'
             };
         },
 
-        /**
-         * Calculer le ratio de l'écran et le classifier
-         * Fix: Utilise tolérance de 5% pour éviter faux positifs
-         */
         detectAspectRatio() {
             const screen = this.getScreenDimensions();
             const ratio = screen.width / screen.height;
 
-            // Classification STRICTE basée sur des plages de tolérance réalistes
-            // Chaque ratio standard a une tolérance de ±3% maximum
             let ratioType, ratioName;
 
-            // 32:9 = 3.556 (tolérance: 3.45 - 3.7)
             if (ratio >= 3.45) {
                 ratioType = '32:9';
                 ratioName = 'Super Ultrawide';
             }
-            // 21:9 = 2.333-2.388 (tolérance: 2.25 - 2.5)
             else if (ratio >= 2.25 && ratio < 2.5) {
                 ratioType = '21:9';
                 ratioName = 'Ultrawide';
             }
-            // 19.5:9 = 2.167 (iPhone ratio, tolérance: 2.1 - 2.25)
             else if (ratio >= 2.1 && ratio < 2.25) {
                 ratioType = '19.5:9';
                 ratioName = 'Mobile Tall';
             }
-            // 18:9 = 2.0 (tolérance: 1.95 - 2.1)
             else if (ratio >= 1.95 && ratio < 2.1) {
                 ratioType = '18:9';
                 ratioName = 'Mobile Wide';
             }
-            // 16:9 = 1.778 (tolérance STRICTE: 1.74 - 1.82)
             else if (ratio >= 1.74 && ratio < 1.82) {
                 ratioType = '16:9';
                 ratioName = 'Standard';
             }
-            // 16:10 = 1.6 (tolérance: 1.55 - 1.65)
             else if (ratio >= 1.55 && ratio < 1.65) {
                 ratioType = '16:10';
                 ratioName = 'Widescreen';
             }
-            // 3:2 = 1.5 (tolérance: 1.45 - 1.55)
             else if (ratio >= 1.45 && ratio < 1.55) {
                 ratioType = '3:2';
                 ratioName = 'Classic';
             }
-            // 4:3 = 1.333 (tolérance: 1.28 - 1.38)
             else if (ratio >= 1.28 && ratio < 1.38) {
                 ratioType = '4:3';
                 ratioName = 'Legacy';
             }
-            // Tout autre ratio = Custom (non-standard)
             else {
                 ratioType = 'custom';
-                // Donner un nom descriptif basé sur le ratio
                 if (ratio > 2.5) ratioName = 'Super Wide Custom';
                 else if (ratio > 1.82) ratioName = 'Wide Custom';
                 else if (ratio < 1.28) ratioName = 'Tall Custom';
@@ -1296,84 +521,84 @@
                 width: screen.width,
                 height: screen.height,
                 isUltrawide: ratio >= 2.0,
-                isSuperUltrawide: ratio >= 3.4,
-                isNonStandard: !this.isStandardResolution(screen.width, screen.height)
             };
         },
 
-        /**
-         * Vérifie si c'est une résolution standard connue
-         */
-        isStandardResolution(w, h) {
-            const standardResolutions = [
-                // 16:9
-                [1920, 1080], [2560, 1440], [3840, 2160], [1280, 720], [1366, 768],
-                // 16:10
-                [1920, 1200], [2560, 1600], [1680, 1050], [1440, 900],
-                // 21:9
-                [2560, 1080], [3440, 1440], [3840, 1600],
-                // 32:9
-                [3840, 1080],
-                // 4:3
-                [1600, 1200], [1024, 768],
-                // Mobile 19.5:9 (iPhone)
-                [2688, 1242], [2778, 1284], [2796, 1290], [2556, 1179], [2436, 1125],
-                // Mobile 18:9 / 18.5:9
-                [2960, 1440], [2880, 1440], [2560, 1312]
-            ];
-            // Tolérance de ±8 pixels pour l'arrondi codec
-            return standardResolutions.some(([sw, sh]) => 
-                Math.abs(sw - w) <= 8 && Math.abs(sh - h) <= 8
-            );
-        },
-
-        /**
-         * Arrondir à un multiple de 8 (compatibilité codec vidéo)
-         */
-        roundToMultipleOf8(value) {
-            return Math.round(value / 8) * 8;
-        },
-
-        /**
-         * Liste des résolutions gaming STANDARD à partir de 2K
-         * Basée sur les résolutions utilisées dans les jeux vidéo
-         */
         GAMING_RESOLUTIONS: {
-            // 16:9 Standard - Les plus courantes en gaming
+            // 4:3
+            '4:3': [
+                { w: 800, h: 600 },
+                { w: 1024, h: 768 },
+                { w: 1152, h: 864 },
+                { w: 1280, h: 960 },
+                { w: 1400, h: 1050 },
+                { w: 1440, h: 1152 },
+                { w: 1600, h: 1200 },
+                { w: 1800, h: 1350 },
+                { w: 1920, h: 1536 },
+                { w: 2048, h: 1536 }
+            ],
+            // 5:4
+            '5:4': [
+                { w: 1280, h: 1024 },
+                { w: 1600, h: 1024 },
+                { w: 2560, h: 2048 }
+            ],
+            // 16:9 Standard
             '16:9': [
-                { w: 2560, h: 1440, label: '2K (1440p)' },
-                { w: 2880, h: 1620, label: '3K (1620p)' },
-                { w: 3200, h: 1800, label: 'QHD+ (1800p)' },
-                { w: 3840, h: 2160, label: '4K (2160p)' }
+                { w: 1280, h: 720 },
+                { w: 1360, h: 768 },
+                { w: 1366, h: 768 },
+                { w: 1600, h: 900 },
+                { w: 1920, h: 1080 },
+                { w: 2048, h: 1152 },
+                { w: 2560, h: 1440 },
+                { w: 3200, h: 1440 },
+                { w: 3200, h: 1800 },
+                { w: 3840, h: 2160 }
             ],
-            // 16:10 Widescreen - Moniteurs productivité/gaming
+            // 16:10 Widescreen
             '16:10': [
-                { w: 2560, h: 1600, label: '2K (WQXGA)' },
-                { w: 3072, h: 1920, label: '3K (16:10)' },
-                { w: 3840, h: 2400, label: '4K (WQUXGA)' }
+                { w: 1280, h: 800 },
+                { w: 1440, h: 900 },
+                { w: 1680, h: 1050 },
+                { w: 1920, h: 1200 },
+                { w: 2048, h: 1152 },
+                { w: 2048, h: 1330 },
+                { w: 2160, h: 1350 },
+                { w: 2560, h: 1600 },
+                { w: 2732, h: 2048 },
+                { w: 2940, h: 1912 },
+                { w: 3320, h: 2160 },
+                { w: 3360, h: 2100 }
             ],
-            // 21:9 Ultrawide - Gaming immersif
+            // 21:9 Ultrawide
             '21:9': [
-                { w: 2560, h: 1080, label: 'UWFHD (1080p UW)' },
-                { w: 3440, h: 1440, label: 'UWQHD (1440p UW)' },
-                { w: 3840, h: 1600, label: 'UWQHD+ (1600p UW)' }
+                { w: 1600, h: 720 },
+                { w: 1920, h: 864 },
+                { w: 2400, h: 1080 },
+                { w: 2560, h: 1080 },
+                { w: 3440, h: 1440 }
             ],
-            // 32:9 Super Ultrawide - Double écran gaming
+            // 2.37:1
+            '2.37:1': [
+                { w: 1920, h: 810 }
+            ],
+            // 32:9 Super Ultrawide
             '32:9': [
-                { w: 3840, h: 1080, label: 'DFHD (1080p SW)' }
+                { w: 3840, h: 1080 }
             ]
         },
 
-        /**
-         * Obtenir le groupe de ratio le plus proche pour l'écran
-         */
         getClosestRatioGroup(screenRatio) {
-            // Ratios de référence
             const ratioGroups = {
-                '16:9': 1.778,    // 16/9
-                '16:10': 1.6,    // 16/10
-                '21:9': 2.37,    // 21/9 (2.333 à 2.388)
-                '32:9': 3.556    // 32/9
+                '4:3': 1.333,
+                '5:4': 1.25,
+                '16:9': 1.778,
+                '16:10': 1.6,
+                '21:9': 2.37,
+                '2.37:1': 2.37,
+                '32:9': 3.556
             };
 
             let closest = '16:9';
@@ -1390,41 +615,66 @@
             return closest;
         },
 
-        /**
-         * Résolutions supportées par Boosteroid (whitelist serveur)
-         * Ces résolutions sont garanties de fonctionner côté serveur
-         */
+        // Resolutions whitelisted by the Boosteroid server
         SUPPORTED_RESOLUTIONS: [
-            // 16:9 Standard
-            [1920, 1080], [2560, 1440], [3840, 2160],
-            // 16:10 Widescreen
-            [1920, 1200], [2560, 1600], [3840, 2400],
-            // 21:9 Ultrawide
-            [2560, 1080], [3440, 1440], [3840, 1600],
-            // 32:9 Super Ultrawide
+            // 4:3
+            [800, 600], [1024, 768], [1152, 864], [1280, 960], [1400, 1050],
+            [1440, 1152], [1600, 1200], [1800, 1350], [1920, 1536], [2048, 1536],
+            // 5:4
+            [1280, 1024], [1600, 1024], [2560, 2048],
+            // 16:9
+            [1280, 720], [1360, 768], [1366, 768], [1600, 900], [1920, 1080],
+            [2048, 1152], [2560, 1440], [3200, 1440], [3200, 1800], [3840, 2160],
+            // 16:10
+            [1280, 800], [1440, 900], [1680, 1050], [1920, 1200], [2048, 1152],
+            [2048, 1330], [2160, 1350], [2560, 1600], [2732, 2048], [2940, 1912],
+            [3320, 2160], [3360, 2100],
+            // 21:9
+            [1600, 720], [1920, 864], [2400, 1080], [2560, 1080], [3440, 1440],
+            // 2.37:1
+            [1920, 810],
+            // 32:9
             [3840, 1080]
         ],
 
-        /**
-         * Vérifier si une résolution est supportée par Boosteroid
-         */
         isResolutionSupported(width, height) {
             return this.SUPPORTED_RESOLUTIONS.some(([w, h]) => w === width && h === height);
         },
 
-        /**
-         * Générer la liste des résolutions sélectionnables
-         * CRITIQUE: N'affiche QUE les résolutions >= native (upscale uniquement)
-         */
+        findBestMatch(screenWidth, screenHeight) {
+            const screenRatio = screenWidth / screenHeight;
+            const screenPixels = screenWidth * screenHeight;
+            let bestMatch = null;
+            let bestScore = Infinity;
+
+            for (const [w, h] of this.SUPPORTED_RESOLUTIONS) {
+                const resRatio = w / h;
+                const resPixels = w * h;
+                // Score = ratio gap (weighted x10) + normalised pixel gap
+                const ratioDiff = Math.abs(resRatio - screenRatio) * 10;
+                const pixelDiff = Math.abs(resPixels - screenPixels) / screenPixels;
+                const score = ratioDiff + pixelDiff;
+
+                // Prefer resolutions >= native (upscale)
+                const isUpscale = resPixels >= screenPixels * 0.95;
+                const adjustedScore = isUpscale ? score : score + 5; // Penalise downscaling
+
+                if (adjustedScore < bestScore) {
+                    bestScore = adjustedScore;
+                    bestMatch = { w, h, score: adjustedScore, ratioDiff, isUpscale };
+                }
+            }
+            return bestMatch;
+        },
+
         getSelectableResolutions(screenWidth, screenHeight) {
             const screenRatio = screenWidth / screenHeight;
             const ratioGroup = this.getClosestRatioGroup(screenRatio);
-            const gamingRes = this.GAMING_RESOLUTIONS[ratioGroup] || this.GAMING_RESOLUTIONS['16:9'];
-            const nativePixels = screenWidth * screenHeight;
-            
-            const resolutions = [];
+            const screenPixels = screenWidth * screenHeight;
 
-            // 1. Ajouter la résolution NATIVE de l'écran en premier
+            const resolutions = [];
+            const seen = new Set();
+
             resolutions.push({
                 w: screenWidth,
                 h: screenHeight,
@@ -1433,58 +683,68 @@
                 isNative: true,
                 ratioGroup: ratioGroup
             });
+            seen.add(`${screenWidth}x${screenHeight}`);
 
-            // 2. Ajouter UNIQUEMENT les résolutions gaming >= native (UPSCALE ONLY)
-            gamingRes.forEach(res => {
-                const resPixels = res.w * res.h;
-                
-                // CRITIQUE: Ignorer les résolutions plus petites que native
-                if (resPixels < nativePixels) return;
-                
-                // Éviter les doublons avec la native
-                if (res.w === screenWidth && res.h === screenHeight) return;
-                
+            const scored = [];
+            for (const [w, h] of this.SUPPORTED_RESOLUTIONS) {
+                const key = `${w}x${h}`;
+                if (seen.has(key)) continue;
+                // Skip resolutions within 8 px of native (codec rounding)
+                if (Math.abs(w - screenWidth) <= 8 && Math.abs(h - screenHeight) <= 8) continue;
+
+                const resRatio = w / h;
+                const ratioDiff = Math.abs(resRatio - screenRatio);
+                const resPixels = w * h;
+                const isUpscale = resPixels >= screenPixels * 0.95;
+
+                scored.push({ w, h, ratioDiff, isUpscale, pixels: resPixels });
+                seen.add(key);
+            }
+
+            scored.sort((a, b) => {
+                const aClose = a.ratioDiff < 0.15 ? 0 : 1;
+                const bClose = b.ratioDiff < 0.15 ? 0 : 1;
+                if (aClose !== bClose) return aClose - bClose;
+                return a.pixels - b.pixels;
+            });
+
+            scored.forEach(res => {
                 resolutions.push({
                     w: res.w,
                     h: res.h,
-                    label: res.label,
-                    tier: res.h >= 2160 ? 'ultra' : (res.h >= 1440 ? 'mid' : 'low'),
+                    tier: res.w >= 3840 ? 'ultra' : (res.w >= 2560 ? 'mid' : 'low'),
                     isNative: false,
-                    ratioGroup: ratioGroup,
-                    isSupported: this.isResolutionSupported(res.w, res.h)
+                    ratioGroup: this.getClosestRatioGroup(res.w / res.h),
+                    isSupported: true,
+                    ratioDiff: res.ratioDiff
                 });
             });
 
-            // 3. Trier par nombre de pixels (du plus petit au plus grand)
-            resolutions.sort((a, b) => (a.w * a.h) - (b.w * b.h));
+            // Recommended = smallest upscale with a near-identical ratio (< 5% gap)
+            const recommended = resolutions.find(r =>
+                !r.isNative &&
+                (r.w * r.h) >= screenPixels * 0.95 &&
+                r.ratioDiff !== undefined && r.ratioDiff < 0.05
+            ) || resolutions.find(r =>
+                !r.isNative &&
+                (r.w * r.h) >= screenPixels * 0.95
+            );
 
-            // 4. Marquer la résolution recommandée (premier upscale disponible, préférer 1440p)
-            const recommended = resolutions.find(r => !r.isNative && r.h >= 1440) ||
-                               resolutions.find(r => !r.isNative);
             if (recommended) {
                 recommended.isRecommended = true;
-            } else {
-                // Aucun upscale disponible, recommander native
+            } else if (resolutions.length > 0) {
                 resolutions[0].isRecommended = true;
             }
 
             return resolutions;
         },
 
-        /**
-         * Générer les résolutions supérieures basées sur le ratio détecté
-         * Utilise maintenant la liste de résolutions gaming standards
-         */
         generateUpscaleResolutions(screenInfo) {
             const { width, height } = screenInfo;
             return this.getSelectableResolutions(width, height);
         },
 
-        /**
-         * Obtenir les infos complètes de l'écran et les résolutions recommandées
-         */
         getScreenAnalysis() {
-            // Vérifier le cache (TTL court pour éviter les valeurs obsolètes)
             const now = Date.now();
             if (this._cache && (now - this._cacheTime) < this.CACHE_TTL) {
                 return this._cache;
@@ -1492,9 +752,7 @@
 
             const screenInfo = this.detectAspectRatio();
             const upscaleOptions = this.generateUpscaleResolutions(screenInfo);
-            
-            // Trouver la résolution recommandée (celle avec isRecommended = true)
-            // ou fallback sur la native si disponible
+
             let recommended = upscaleOptions.find(r => r.isRecommended);
             if (!recommended) {
                 recommended = upscaleOptions.find(r => r.isNative) || upscaleOptions[0];
@@ -1508,47 +766,41 @@
                 summary: `${screenInfo.width}x${screenInfo.height} (${screenInfo.ratioType} - ratio ${screenInfo.ratioExact})`
             };
 
-            // Mettre en cache
             this._cache = result;
             this._cacheTime = now;
 
             return result;
         },
 
-        /**
-         * Générer le HTML des options de résolution pour un <select>
-         * TOUS les aspect ratios avec leurs résolutions gaming
-         */
         generateResolutionOptionsHTML(currentWidth, currentHeight, isAutoMode = false) {
             const analysis = this.getScreenAnalysis();
-            const { screen, resolutions } = analysis;
+            const { screen } = analysis;
             const detectedRatio = this.getClosestRatioGroup(screen.ratio);
 
             let html = '';
 
-            // Option Auto-détection en premier - utilise la résolution NATIVE de l'écran
             const nativeRes = analysis.native || { w: screen.width, h: screen.height, label: 'Native' };
-            // v3.7.2: Sélectionner auto si isAutoMode est true
             const isAutoSelected = isAutoMode || !currentWidth || currentWidth === 'auto';
             html += `<optgroup label="[AUTO]">`;
             html += `<option value="auto" ${isAutoSelected ? 'selected' : ''}>`;
-            html += `Auto -> ${nativeRes.w}x${nativeRes.h} (Native)`;
+            html += `Auto -> ${escapeHtml(nativeRes.w)}x${escapeHtml(nativeRes.h)} (Native)`;
             html += `</option>`;
             html += `</optgroup>`;
 
-            // Résolution Native de l'écran
-            html += `<optgroup label="Native (${screen.width}x${screen.height})">`;
+            html += `<optgroup label="Native (${escapeHtml(screen.width)}x${escapeHtml(screen.height)})">`;
             const isNativeSelected = !isAutoSelected && currentWidth === screen.width && currentHeight === screen.height;
-            html += `<option value="${screen.width}x${screen.height}" ${isNativeSelected ? 'selected' : ''}>`;
-            html += `${screen.width}x${screen.height} (Native)`;
+            html += `<option value="${escapeHtml(`${screen.width}x${screen.height}`)}" ${isNativeSelected ? 'selected' : ''}>`;
+            html += `${escapeHtml(screen.width)}x${escapeHtml(screen.height)} (Native)`;
             html += `</option>`;
             html += `</optgroup>`;
 
-            // TOUS les groupes de ratio avec leurs résolutions
             const ratioLabels = {
-                '16:9': '16:9 Standard',
-                '16:10': '16:10 Widescreen',
+                '4:3': '4:3',
+                '5:4': '5:4',
+                '16:9': '16:9',
+                '16:10': '16:10',
                 '21:9': '21:9 Ultrawide',
+                '2.37:1': '2.37:1 Cinematic',
                 '32:9': '32:9 Super Ultrawide'
             };
 
@@ -1556,15 +808,19 @@
                 const gamingRes = this.GAMING_RESOLUTIONS[ratio];
                 if (!gamingRes) continue;
 
-                // Marquer le ratio détecté de l'écran
                 const isDetected = ratio === detectedRatio ? ' [OK]' : '';
-                html += `<optgroup label="${label}${isDetected}">`;
+                html += `<optgroup label="${escapeHtml(`${label}${isDetected}`)}">`;
 
                 gamingRes.forEach(res => {
-                    const isSelected = currentWidth === res.w && currentHeight === res.h;
-                    html += `<option value="${res.w}x${res.h}" ${isSelected ? 'selected' : ''}>`;
-                    html += `${res.w}x${res.h} - ${res.label}`;
-                    html += `</option>`;
+                    const isSelected = !isAutoSelected && currentWidth === res.w && currentHeight === res.h;
+                    const optionValue = `${res.w}x${res.h}`;
+                    let optionLabel = optionValue;
+
+                    if (res.w === 3840 && res.h === 2160) optionLabel += ' (4K)';
+                    if (res.w === 2560 && res.h === 1440) optionLabel += ' (1440p)';
+                    if (res.w === 1920 && res.h === 1080) optionLabel += ' (1080p)';
+
+                    html += `<option value="${escapeHtml(optionValue)}" ${isSelected ? 'selected' : ''}>${escapeHtml(optionLabel)}</option>`;
                 });
 
                 html += `</optgroup>`;
@@ -1573,55 +829,41 @@
             return html;
         },
 
-        /**
-         * Appliquer une résolution de manière sécurisée avec validation
-         * Vérifie si Boosteroid accepte réellement la résolution demandée
-         * @param {number} newWidth - Largeur demandée
-         * @param {number} newHeight - Hauteur demandée
-         * @param {string} label - Label de la résolution (ex: "2K 1440p")
-         * @returns {Object} - Résultat avec statut et résolution appliquée
-         */
         setResolutionSafely(newWidth, newHeight, label = '') {
-            const oldWidth = CONFIG.resolution.width;
-            const oldHeight = CONFIG.resolution.height;
 
-            // Vérifier si c'est dans la whitelist
             const isSupported = this.isResolutionSupported(newWidth, newHeight);
-            
+
             if (!isSupported) {
-                console.warn(`[Optimizer+] [!] Résolution ${newWidth}x${newHeight} non dans la whitelist serveur`);
-                // On applique quand même mais on prévient
+                console.warn(`[Optimizer+] [!] R\u00E9solution ${newWidth}x${newHeight} non dans la whitelist serveur`);
+                // Applied anyway; the stream check below reverts it if the server refuses
             }
 
-            // Appliquer la nouvelle résolution
             CONFIG.resolution.width = newWidth;
             CONFIG.resolution.height = newHeight;
             CONFIG.resolution.pixelRatio = newWidth >= 3840 ? 2 : (newWidth >= 2560 ? 1.5 : 1);
 
-            console.log(`[Optimizer+] Résolution demandée: ${newWidth}x${newHeight} ${label ? `(${label})` : ''}`);
+            console.log(`[Optimizer+] R\u00E9solution demand\u00E9e: ${newWidth}x${newHeight} ${label ? `(${label})` : ''}`);
 
-            // Validation asynchrone après 2 secondes
+            // Validate against the real stream once it has settled
             setTimeout(() => {
                 const video = document.querySelector('video');
                 if (video && video.videoWidth && video.videoHeight) {
                     const actualWidth = video.videoWidth;
                     const actualHeight = video.videoHeight;
-                    const tolerance = 0.9; // 10% de tolérance
+                    const tolerance = 0.9;
 
                     if (actualWidth < newWidth * tolerance || actualHeight < newHeight * tolerance) {
-                        console.warn(`[Optimizer+] [!] Résolution ${newWidth}x${newHeight} refusée par Boosteroid`);
-                        console.warn(`[Optimizer+] Fallback réel: ${actualWidth}x${actualHeight}`);
-                        
-                        // Revert à l'ancienne résolution dans CONFIG
+                        console.warn(`[Optimizer+] [!] R\u00E9solution ${newWidth}x${newHeight} refus\u00E9e par Boosteroid`);
+                        console.warn(`[Optimizer+] Fallback r\u00E9el: ${actualWidth}x${actualHeight}`);
+
                         CONFIG.resolution.width = actualWidth;
                         CONFIG.resolution.height = actualHeight;
-                        
-                        // Notification utilisateur
+
                         if (typeof showNotification === 'function') {
-                            showNotification(`[!] Résolution refusée -> ${actualWidth}x${actualHeight}`);
+                            showNotification(`[!] R\u00E9solution refus\u00E9e -> ${actualWidth}x${actualHeight}`);
                         }
                     } else {
-                        console.log(`[Optimizer+] [OK] Résolution ${newWidth}x${newHeight} confirmée par le stream`);
+                        console.log(`[Optimizer+] [OK] R\u00E9solution ${newWidth}x${newHeight} confirm\u00E9e par le stream`);
                     }
                 }
             }, 2500);
@@ -1633,321 +875,65 @@
             };
         },
 
-        /**
-         * Appliquer la résolution auto-détectée - utilise la résolution NATIVE de l'écran client
-         * Utilise setResolutionSafely pour validation serveur
-         */
         applyAutoResolution() {
-            const analysis = this.getScreenAnalysis();
-            // CORRECTION: Auto = résolution NATIVE de l'écran client, pas upscale
-            const nativeRes = analysis.native || analysis.screen;
-            
-            if (nativeRes) {
-                const width = nativeRes.w || nativeRes.width;
-                const height = nativeRes.h || nativeRes.height;
-                const label = nativeRes.label || 'Native';
-                
-                // Utiliser setResolutionSafely pour validation et feedback
-                this.setResolutionSafely(width, height, label);
-                console.log(`[Optimizer+] Auto-résolution (native): ${width}x${height}`);
-                return { w: width, h: height, label: label };
+            const screen = this.getScreenDimensions();
+            const screenW = screen.width;
+            const screenH = screen.height;
+
+            const bestMatch = this.findBestMatch(screenW, screenH);
+
+            if (bestMatch) {
+                const label = `Auto (${bestMatch.w}x${bestMatch.h})`;
+                this.setResolutionSafely(bestMatch.w, bestMatch.h, label);
+                console.log(`[Optimizer+] Auto-r\u00E9solution: \u00E9cran ${screenW}x${screenH} \u2192 Boosteroid ${bestMatch.w}x${bestMatch.h} (ratio diff: ${bestMatch.ratioDiff.toFixed(4)})`);
+                return { w: bestMatch.w, h: bestMatch.h, label: label };
             }
-            return null;
+
+            this.setResolutionSafely(screenW, screenH, 'Native (fallback)');
+            console.log(`[Optimizer+] Auto-r\u00E9solution (native fallback): ${screenW}x${screenH}`);
+            return { w: screenW, h: screenH, label: 'Native' };
         },
-
-        /**
-         * Obtenir l'état actuel de la résolution active
-         * @returns {Object} - Résolution actuelle et statut
-         */
-        getCurrentResolutionStatus() {
-            const video = document.querySelector('video');
-            const configRes = { width: CONFIG.resolution.width, height: CONFIG.resolution.height };
-            const actualRes = video ? { width: video.videoWidth, height: video.videoHeight } : null;
-            
-            let status = 'unknown';
-            if (actualRes && actualRes.width && actualRes.height) {
-                const tolerance = 0.9;
-                if (actualRes.width >= configRes.width * tolerance && actualRes.height >= configRes.height * tolerance) {
-                    status = 'confirmed';
-                } else {
-                    status = 'fallback';
-                }
-            }
-            
-            return {
-                requested: configRes,
-                actual: actualRes,
-                status: status,
-                isSupported: this.isResolutionSupported(configRes.width, configRes.height)
-            };
-        }
     };
-
-    // v3.7.2: Exposition globale supprimée pour sécurité (XSS prevention)
-    // SmartResolutionDetector reste accessible uniquement dans le scope IIFE
-    // Pour debug: utiliser console.log(SmartResolutionDetector.getScreenAnalysis()) dans le script
 
     console.log('[Optimizer+] Smart Resolution Detector:', SmartResolutionDetector.getScreenAnalysis().summary);
 
-    // ===============================================================================
-    // v3.5 AXE 2: SMART CODEC SELECTOR - Auto-detect optimal codec avec HW support
-    // ===============================================================================
+    // SMART CODEC SELECTOR - Pick the best hardware-decoded codec
+
+    // Captured before any hook: the real answer, for the WebRTC pipeline
+    const realDecodingInfo = navigator.mediaCapabilities?.decodingInfo?.bind(navigator.mediaCapabilities);
 
     const SmartCodecSelector = {
-        detectedCodec: null,
-        codecCheckDone: false,
-        // Fix: Timeout adaptatif - 5s pour machines lentes (TV, Low-End), 2s pour rapides
-        getCodecTimeout() {
-            return (ENV_PROFILE.isLowEnd || ENV_PROFILE.isTV) ? 5000 : 2000;
-        },
+        hardware: null,
 
-        /**
-         * Promise avec timeout pour éviter blocages sur machines lentes
-         */
-        withTimeout(promise, ms) {
-            return Promise.race([
-                promise,
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
-            ]);
-        },
-
-        /**
-         * Détecter les codecs supportés en HW et choisir le meilleur
-         */
-        async getOptimalCodec() {
-            if (this.codecCheckDone) return this.detectedCodec;
-
-            if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) {
-                console.log('[Optimizer+] MediaCapabilities API non disponible, fallback H.264');
-                this.detectedCodec = { codec: 'avc1.640028', name: 'H.264 High', hwAccel: 85, efficiency: 1.0 };
-                this.codecCheckDone = true;
-                return this.detectedCodec;
-            }
-
-            const codecs = [
-                { codec: 'av01.0.08M.08', name: 'AV1 Main', hwAccel: 95, efficiency: 0.8 },     // AV1 = 20% meilleur ratio
-                { codec: 'hev1.1.6.L93.B0', name: 'HEVC Main10', hwAccel: 90, efficiency: 0.85 }, // HEVC
-                { codec: 'avc1.640028', name: 'H.264 High', hwAccel: 85, efficiency: 1.0 },       // H.264 fallback
-            ];
-
-            let bestCodec = codecs[codecs.length - 1]; // H.264 par défaut
-
-            for (const codecInfo of codecs) {
+        // Hardware decode at the target resolution and 120 FPS, per codec. 'smooth' also
+        // carries Chrome's own history of dropped frames for that codec and resolution.
+        async probe() {
+            if (this.hardware || !realDecodingInfo) return;
+            const hardware = {};
+            const video = { width: CONFIG.resolution.width, height: CONFIG.resolution.height, bitrate: 30000000, framerate: 120 };
+            for (const mime of ['video/AV1', 'video/H265', 'video/H264']) {
                 try {
-                    const config = {
-                        type: 'media-source',
-                        video: {
-                            contentType: `video/mp4; codecs="${codecInfo.codec}"`,
-                            width: EFFECTIVE_CONFIG.resolution?.width || 1920,
-                            height: EFFECTIVE_CONFIG.resolution?.height || 1080,
-                            bitrate: CONFIG.streaming.maxBitrate,
-                            framerate: 60,
-                        },
-                    };
-
-                    // Fix: Timeout adaptatif (5s Low-End/TV, 2s High-End)
-                    const result = await this.withTimeout(
-                        navigator.mediaCapabilities.decodingInfo(config),
-                        this.getCodecTimeout()
-                    );
-
-                    if (result.supported && result.powerEfficient) {
-                        console.log(`[Optimizer+] [OK] Codec ${codecInfo.name} supporté & power-efficient (HW decode)`);
-                        bestCodec = codecInfo;
-                        break; // Premier codec supporté = le meilleur
-                    } else if (result.supported) {
-                        console.log(`[Optimizer+] Codec ${codecInfo.name} supporté (SW decode)`);
-                        // Continuer à chercher un codec HW
-                    }
+                    const r = await realDecodingInfo({ type: 'webrtc', video: { ...video, contentType: mime } });
+                    hardware[mime] = !!(r.supported && r.powerEfficient && r.smooth);
                 } catch (e) {
-                    // Codec non supporté, continuer
+                    hardware[mime] = false;
                 }
             }
-
-            this.detectedCodec = bestCodec;
-            this.codecCheckDone = true;
-            console.log(`[Optimizer+] Codec optimal détecté: ${bestCodec.name} (efficiency: ${bestCodec.efficiency})`);
-            return bestCodec;
+            this.hardware = hardware;
         },
 
-        /**
-         * Adapter le bitrate au codec + FPS réels
-         */
-        calculateOptimalBitrate(fpsHistory) {
-            if (!fpsHistory || fpsHistory.length === 0) return CONFIG.streaming.targetBitrate;
-
-            const avgFps = fpsHistory.reduce((a, b) => a + b, 0) / fpsHistory.length;
-            let bitrate = CONFIG.streaming.targetBitrate;
-
-            // Si FPS stable > 58: peut augmenter bitrate
-            if (avgFps >= 58) {
-                bitrate = Math.min(bitrate * 1.1, CONFIG.streaming.maxBitrate);
-            }
-            // Si FPS < 50: réduire bitrate
-            else if (avgFps < 50) {
-                bitrate = Math.max(bitrate * 0.85, CONFIG.streaming.minBitrate);
-            }
-
-            // Codec-specific adjustments
-            if (this.detectedCodec) {
-                bitrate = Math.round(bitrate * this.detectedCodec.efficiency);
-            }
-
-            return Math.round(bitrate);
+        describe() {
+            if (!this.hardware) return 'hw decode ?';
+            const flags = Object.entries(this.hardware).map(([mime, ok]) => `${mime.slice(6)} ${ok ? 'yes' : 'NO'}`).join(', ');
+            return `hw decode ${CONFIG.resolution.width}x${CONFIG.resolution.height}@120: ${flags}`;
         }
     };
 
-    // ===============================================================================
-    // v3.5 AXE 3: FILTER BATCH PROCESSOR - Anti-Flickering Frame-by-Frame
-    // ===============================================================================
-
-    const FilterBatchProcessor = {
-        filterUpdateQueue: [],
-        isProcessingBatch: false,
-        lastBatchTime: 0,
-        minBatchInterval: 150, // v3.6.2: Augmenté à 150ms pour réduire les recalculs inutiles
-
-        /**
-         * Queue filter updates au lieu de les appliquer immédiatement
-         */
-        queueFilterUpdate(operation) {
-            this.filterUpdateQueue.push(operation);
-
-            // Traiter la queue via rAF (frame-aligned)
-            if (!this.isProcessingBatch) {
-                this.isProcessingBatch = true;
-                requestAnimationFrame(() => this.processBatch());
-            }
-        },
-
-        /**
-         * Process toutes les opérations en une seule passe pour éviter flickering
-         */
-        processBatch() {
-            const now = performance.now();
-
-            // Throttle: minimum 16ms entre les batches
-            if (now - this.lastBatchTime < this.minBatchInterval) {
-                requestAnimationFrame(() => this.processBatch());
-                return;
-            }
-
-            if (this.filterUpdateQueue.length === 0) {
-                this.isProcessingBatch = false;
-                return;
-            }
-
-            const videos = document.querySelectorAll('video');
-
-            // v3.6: Ne pas utiliser willChange en mode performance (cause des leaks mémoire GPU)
-            const useWillChange = !CONFIG.display.performanceMode && CONFIG.performance.gpuAcceleration;
-
-            if (useWillChange) {
-                videos.forEach(video => {
-                    video.style.willChange = 'filter';
-                });
-            }
-
-            // Appliquer TOUS les changements d'un coup
-            while (this.filterUpdateQueue.length > 0) {
-                const operation = this.filterUpdateQueue.shift();
-                try {
-                    operation();
-                } catch (e) {
-                    console.warn('[Optimizer+] Batch operation error:', e);
-                }
-            }
-
-            // Cleanup rapide - pas de force reflow inutile
-            if (useWillChange) {
-                requestAnimationFrame(() => {
-                    videos.forEach(video => {
-                        video.style.willChange = 'auto';
-                    });
-                });
-            }
-
-            this.lastBatchTime = now;
-            this.isProcessingBatch = false;
-        },
-
-        /**
-         * Clear la queue (pour reset)
-         */
-        clear() {
-            this.filterUpdateQueue = [];
-            this.isProcessingBatch = false;
-        }
-    };
-
-    // ===============================================================================
-    // v3.5 AXE 4: ZERO-FLICKER BOOTSTRAP - Initialization sans pop-in
-    // ===============================================================================
-
-    const ZeroFlickerBootstrap = {
-        initialized: false,
-
-        /**
-         * Initialize filters avec transition douce
-         */
-        async initializeFilters() {
-            if (this.initialized) return;
-
-            const videos = document.querySelectorAll('video');
-            if (videos.length === 0) return;
-
-            console.log('[Optimizer+] ZeroFlickerBootstrap: Initializing...');
-
-            // Phase 1: Freezer le rendu momentanément
-            videos.forEach(video => {
-                video.style.pointerEvents = 'none';
-                video.style.willChange = 'filter';
-            });
-
-            // Phase 2: Appliquer les filtres neutres d'abord
-            const originalEnabled = CONFIG.filters.enabled;
-            CONFIG.filters.enabled = false;
-
-            if (typeof videoEnhancer !== 'undefined' && videoEnhancer) {
-                videoEnhancer.updateFilterString();
-                videoEnhancer.applyFiltersToAllVideos();
-            }
-
-            // Phase 3: Transition douce vers les vrais filtres
-            await new Promise(resolve => requestAnimationFrame(resolve));
-
-            CONFIG.filters.enabled = originalEnabled;
-
-            if (typeof videoEnhancer !== 'undefined' && videoEnhancer) {
-                videoEnhancer.updateFilterString();
-                videoEnhancer.applyFiltersToAllVideos();
-            }
-
-            // Phase 4: Déverrouiller
-            await new Promise(resolve => requestAnimationFrame(resolve));
-
-            videos.forEach(video => {
-                video.style.pointerEvents = 'auto';
-                video.style.willChange = 'auto';
-            });
-
-            this.initialized = true;
-            console.log('[Optimizer+] [OK] ZeroFlickerBootstrap: Filters initialized smoothly');
-        },
-
-        reset() {
-            this.initialized = false;
-        }
-    };
-
-    // ===============================================================================
-    // AXE 2: STREAMING STATE & LAZY HOOKS
-    // ===============================================================================
+    // STREAMING STATE & LAZY HOOKS
 
     const StreamingEnhancements = {
         active: false,
         cleanupHandlers: [],
-        originalApis: {},
 
         enable() {
             if (this.active) return;
@@ -1955,42 +941,12 @@
             console.log('[Optimizer+] Enabling streaming enhancements...');
 
             try {
-                // v3.5: Activer StreamInterceptor pour HW decode (opt-in)
-                if (CONFIG.performance.streamInterceptor) {
-                    StreamInterceptor.enable();
-                    this.cleanupHandlers.push(() => StreamInterceptor.disable());
-                } else {
-                    console.log('[Optimizer+] StreamInterceptor désactivé (opt-in)');
-                }
+                StreamInterceptor.enable();
+                this.cleanupHandlers.push(() => StreamInterceptor.disable());
 
-                // v3.5: Détecter le codec optimal
-                SmartCodecSelector.getOptimalCodec().then(codec => {
-                    console.log(`[Optimizer+] Using codec: ${codec.name}`);
-                });
+                StreamMonitor.enable();
+                this.cleanupHandlers.push(() => StreamMonitor.disable());
 
-                // Démarrer le FPS Monitor
-                fpsMonitor = new FpsMonitor();
-                fpsMonitor.start();
-
-                // v3.5: Adapter le bitrate selon FPS + codec
-                fpsMonitor.onFpsUpdate((fps) => {
-                    if (FilterState.fpsHistory.length >= 5) {
-                        const optimalBitrate = SmartCodecSelector.calculateOptimalBitrate(FilterState.fpsHistory);
-                        if (Math.abs(optimalBitrate - CONFIG.streaming.targetBitrate) > 1000000) {
-                            CONFIG.streaming.targetBitrate = optimalBitrate;
-                        }
-                    }
-                });
-
-                this.cleanupHandlers.push(() => {
-                    if (fpsMonitor) {
-                        fpsMonitor.stop();
-                        fpsMonitor = null;
-                    }
-                });
-
-                // Détection de fermeture de session
-                this.initSessionCloseDetection();
                 this.initSessionCloseDetection();
 
                 console.log('[Optimizer+] [OK] Streaming enhancements active');
@@ -2010,15 +966,6 @@
             });
             this.cleanupHandlers = [];
 
-            // Restaurer APIs originales
-            Object.entries(this.originalApis).forEach(([key, value]) => {
-                try {
-                    const [obj, prop] = key.split('.');
-                    if (obj === 'window') window[prop] = value;
-                } catch (e) {}
-            });
-            this.originalApis = {};
-
             console.log('[Optimizer+] [OK] Cleanup complete');
         },
 
@@ -2031,13 +978,12 @@
                 }
             };
 
-            // Écouter les changements d'URL
             window.addEventListener('popstate', handleUrlChange);
             this.cleanupHandlers.push(() => window.removeEventListener('popstate', handleUrlChange));
 
-            // Override pushState pour SPA
+            // pushState override for SPA navigation
             const originalPushState = window.history.pushState;
-            window.history.pushState = function(...args) {
+            window.history.pushState = function (...args) {
                 originalPushState.apply(this, args);
                 handleUrlChange();
             };
@@ -2047,20 +993,17 @@
         }
     };
 
-    // ===============================================================================
-    // SYSTÈME D'INTERNATIONALISATION (i18n)
-    // ===============================================================================
+    // INTERNATIONALISATION (i18n)
 
     const I18N = {
-        // Langues disponibles
         languages: {
             en: 'English',
-            fr: 'Français',
+            fr: 'Fran\u00E7ais',
             de: 'Deutsch',
-            es: 'Español',
+            es: 'Espa\u00F1ol',
             it: 'Italiano',
-            pt: 'Português',
-            ru: 'Русский',
+            pt: 'Portugu\u00EAs',
+            ru: '\u0420\u0443\u0441\u0441\u043A\u0438\u0439',
             pl: 'Polski',
             uk: 'Українська',
             tr: 'Türkçe',
@@ -2071,7 +1014,6 @@
             sv: 'Svenska'
         },
 
-        // Traductions
         translations: {
             en: {
                 title: 'Optimizer Plus',
@@ -2089,6 +1031,15 @@
                 advancedFilters: 'Advanced Video Filters',
                 quickPresets: 'Quick Presets',
                 enableAdvanced: 'Enable Advanced Filters',
+                performanceMode: 'Performance Mode',
+                performanceModeDesc: 'Lighter GPU filters for maximum FPS (fast denoise, skip clarity on GPU) — quality settings stay intact',
+                options: 'Options',
+                perfModeNotifOn: 'Performance Mode: maximum FPS',
+                perfModeNotifOff: 'Performance Mode off (max quality)',
+                upscaleOffNotif: 'Upscaling turned off: GPU overloaded',
+                decoderOverloadNotif: 'Video decoder overloaded: lower the resolution or the FPS',
+                resAppliedNotif: 'Stream is now {res}',
+                resReloadNotif: 'Stream still {res}: reload the page to apply',
                 presetDefault: 'Default',
                 presetCinematic: 'Cinematic',
                 presetGame: 'Competitive',
@@ -2109,6 +1060,7 @@
                 filterTier: 'Quality Tier',
                 adaptiveMode: 'Adaptive Mode',
                 streamInterceptor: 'Stream Interceptor (HW Decode)',
+                bitrateEnforcer: 'Aggressive Bitrate Forcer (V4)',
                 ultrawideMode: 'Ultrawide Mode (21:9, 32:9)',
                 ultrawideAutoDetect: 'Auto-detect 21:9+',
                 performanceMode: 'Performance Mode',
@@ -2116,7 +1068,8 @@
                 displaySettings: 'Display & Ultrawide',
                 screenInfo: 'Screen Info',
                 fitMode: 'Display Mode',
-                hwProfile: 'Profile'
+                hwProfile: 'Profile',
+                stretchMode: 'Stretch to Fill (No Borders)'
             },
             fr: {
                 title: 'Optimizer Plus',
@@ -2134,6 +1087,15 @@
                 advancedFilters: 'Filtres Vidéo Avancés',
                 quickPresets: 'Présets rapides',
                 enableAdvanced: 'Activer filtres avancés',
+                performanceMode: 'Mode Performance',
+                performanceModeDesc: 'Filtres GPU plus légers pour FPS max (fast denoise, skip clarity GPU) — les réglages de qualité restent intacts',
+                options: 'Options',
+                perfModeNotifOn: 'Mode Performance: FPS maximisés',
+                perfModeNotifOff: 'Mode Performance désactivé (qualité max)',
+                upscaleOffNotif: 'Upscale désactivé : GPU surchargé',
+                decoderOverloadNotif: 'Décodeur vidéo surchargé : baisse la résolution ou les FPS',
+                resAppliedNotif: 'Flux maintenant en {res}',
+                resReloadNotif: 'Flux toujours en {res} : recharge la page pour appliquer',
                 presetDefault: 'Défaut',
                 presetCinematic: 'Cinématique',
                 presetGame: 'Compétitif',
@@ -2151,6 +1113,7 @@
                 language: 'Langue',
                 autoDetect: 'Auto-détection',
                 streamInterceptor: 'Interception Stream (Déco. HW)',
+                bitrateEnforcer: 'Forçage Bitrate Agressif (V4)',
                 ultrawideMode: 'Mode Ultrawide (21:9, 32:9)',
                 ultrawideAutoDetect: 'Auto-détection 21:9+',
                 performanceMode: 'Mode Performance',
@@ -2158,7 +1121,8 @@
                 displaySettings: 'Affichage & Ultrawide',
                 screenInfo: 'Info écran',
                 fitMode: 'Mode d\'affichage',
-                hwProfile: 'Profil'
+                hwProfile: 'Profil',
+                stretchMode: 'Étirement Complet (Sans Bordures)'
             },
             de: {
                 title: 'Optimizer Plus',
@@ -2192,6 +1156,8 @@
                 presetApplied: '[*] Vorlage "{name}" angewendet!',
                 language: 'Sprache',
                 autoDetect: 'Automatisch',
+                streamInterceptor: 'Stream-Abfangjäger (HW-Dekodierung)',
+                bitrateEnforcer: 'Aggressiver Bitraten-Erzwinger (V4)',
                 ultrawideMode: 'Ultrawide-Modus (21:9, 32:9)',
                 ultrawideAutoDetect: 'Auto-Erkennung 21:9+',
                 performanceMode: 'Leistungsmodus',
@@ -2199,7 +1165,8 @@
                 displaySettings: 'Anzeige & Ultrawide',
                 screenInfo: 'Bildschirminfo',
                 fitMode: 'Anzeigemodus',
-                hwProfile: 'Profil'
+                hwProfile: 'Profil',
+                stretchMode: 'Strecken (Keine Ränder)'
             },
             es: {
                 title: 'Optimizer Plus',
@@ -2233,7 +1200,15 @@
                 settingsReset: '[<<] Configuración restablecida.',
                 presetApplied: '[*] Preset "{name}" aplicado!',
                 language: 'Idioma',
-                autoDetect: 'Auto-detectar'
+                autoDetect: 'Auto-detectar',
+                ultrawideMode: 'Modo Ultrawide (21:9, 32:9)',
+                performanceMode: 'Modo Rendimiento',
+                performanceModeHint: 'Desactiva filtros pesados para maximizar FPS',
+                displaySettings: 'Pantalla y Ultrawide',
+                screenInfo: 'Información de pantalla',
+                fitMode: 'Modo de visualización',
+                hwProfile: 'Perfil',
+                stretchMode: 'Estirar para llenar (Sin bordes)'
             },
             it: {
                 title: 'Optimizer Plus',
@@ -2250,7 +1225,7 @@
                 saturation: 'Saturazione',
                 advancedFilters: 'Filtri Video Avanzati',
                 quickPresets: 'Preset rapidi',
-                enableAdvanced: 'Attiva filtri avanzati',
+                enableAdvanced: 'Attiva filtri avanzi',
                 presetDefault: 'Predefinito',
                 presetCinematic: 'Cinematico',
                 presetGame: 'Competitivo',
@@ -2269,9 +1244,12 @@
                 language: 'Lingua',
                 autoDetect: 'Auto-rileva',
                 ultrawideMode: 'Modalità Ultrawide (21:9, 32:9)',
+                performanceMode: 'Modalità Prestazioni',
+                performanceModeHint: 'Disattiva i filtri pesanti per massimizzare i FPS',
                 displaySettings: 'Display & Ultrawide',
                 screenInfo: 'Info schermo',
-                fitMode: 'Modalità display'
+                fitMode: 'Modalità display',
+                stretchMode: 'Allunga per riempire (Senza bordi)'
             },
             pt: {
                 title: 'Optimizer Plus',
@@ -2288,7 +1266,7 @@
                 saturation: 'Saturação',
                 advancedFilters: 'Filtros de Vídeo Avançados',
                 quickPresets: 'Presets rápidos',
-                enableAdvanced: 'Ativar filtros avançados',
+                enableAdvanced: 'Ativar - filtros avançados',
                 presetDefault: 'Padrão',
                 presetCinematic: 'Cinematográfico',
                 presetGame: 'Competitivo',
@@ -2307,9 +1285,12 @@
                 language: 'Idioma',
                 autoDetect: 'Auto-detectar',
                 ultrawideMode: 'Modo Ultrawide (21:9, 32:9)',
+                performanceMode: 'Modo de Desempenho',
+                performanceModeHint: 'Desativa filtros pesados para maximizar FPS',
                 displaySettings: 'Tela & Ultrawide',
                 screenInfo: 'Info tela',
-                fitMode: 'Modo de exibição'
+                fitMode: 'Modo de exibição',
+                stretchMode: 'Esticar (Sem bordas)'
             },
             ru: {
                 title: 'Optimizer Plus',
@@ -2345,9 +1326,13 @@
                 language: 'Язык',
                 autoDetect: 'Авто-определение',
                 ultrawideMode: 'Режим Ultrawide (21:9, 32:9)',
+                performanceMode: 'Режим производительности',
+                performanceModeHint: 'Отключает тяжелые фильтры для максимизации FPS',
                 displaySettings: 'Экран & Ultrawide',
                 screenInfo: 'Инфо экрана',
-                fitMode: 'Режим отображения'
+                fitMode: 'Режим отображения',
+                hwProfile: 'Профиль',
+                stretchMode: 'Растянуть на весь экран'
             },
             pl: {
                 title: 'Optimizer Plus',
@@ -2381,7 +1366,15 @@
                 settingsReset: '[<<] Ustawienia zresetowane.',
                 presetApplied: '[*] Preset "{name}" zastosowany!',
                 language: 'Język',
-                autoDetect: 'Auto-wykrywanie'
+                autoDetect: 'Auto-wykrywanie',
+                ultrawideMode: 'Tryb Ultrawide (21:9, 32:9)',
+                performanceMode: 'Tryb wydajności',
+                performanceModeHint: 'Wyłącza ciężkie filtry, aby zmaksymalizować FPS',
+                displaySettings: 'Ekran i Ultrawide',
+                screenInfo: 'Informacje o ekranie',
+                fitMode: 'Tryb wyświetlania',
+                hwProfile: 'Profil',
+                stretchMode: 'Rozciągnij (Bez ramek)'
             },
             uk: {
                 title: 'Optimizer Plus',
@@ -2408,14 +1401,24 @@
                 noiseReduction: 'Зменшення шуму',
                 vibrance: 'Жвавість',
                 clarity: 'Чіткість',
-                streamInterceptor: 'Перехоплення потоку (HW декод.)',
+                streamInterceptor: 'Перехоплення потоку (апаратне декод.)',
                 apply: 'Застосувати',
                 reset: 'Скинути',
                 settingsSaved: '[OK] Налаштування збережено!',
                 settingsReset: '[<<] Налаштування скинуто.',
                 presetApplied: '[*] Пресет "{name}" застосовано!',
                 language: 'Мова',
-                autoDetect: 'Авто-визначення'
+                autoDetect: 'Авто-визначення',
+                streamQuality: 'Якість стриму',
+                bitrateEnforcer: 'Примусовий бітрейт (V4)',
+                ultrawideMode: 'Режим Ultrawide (21:9, 32:9)',
+                displaySettings: 'Екран та Ultrawide',
+                screenInfo: 'Інформація про екран',
+                fitMode: 'Режим лідображення',
+                hwProfile: 'Профіль',
+                stretchMode: 'Розтягнути (Без окраїв)',
+                performanceMode: 'Режим продуктивності',
+                performanceModeHint: 'Вимкнення  важких фільтрів для максимізації FPS'
             },
             tr: {
                 title: 'Optimizer Plus',
@@ -2449,7 +1452,10 @@
                 settingsReset: '[<<] Ayarlar sıfırlandı.',
                 presetApplied: '[*] Preset "{name}" uygulandı!',
                 language: 'Dil',
-                autoDetect: 'Otomatik algıla'
+                autoDetect: 'Otomatik algıla',
+                performanceMode: 'Performans Modu',
+                performanceModeHint: 'FPS\'yi en üst düzeye çıkarmak için ağır filtreleri devre dışı bırakır',
+                stretchMode: 'Ekrana Sığdır (Kenarlıksız)'
             },
             cs: {
                 title: 'Optimizer Plus',
@@ -2472,7 +1478,7 @@
                 presetGame: 'Soutěžní',
                 presetComfort: 'Komfort',
                 presetPerfect: 'Dokonalá Kvalita',
-                presetCustom: 'Vlastní',
+                presetCustom: 'Vlastné',
                 noiseReduction: 'Redukce šumu',
                 vibrance: 'Živost',
                 clarity: 'Čistota',
@@ -2483,7 +1489,10 @@
                 settingsReset: '[<<] Nastavení obnoveno. Obnovte stránku.',
                 presetApplied: '[*] Preset "{name}" použit!',
                 language: 'Jazyk',
-                autoDetect: 'Automaticky'
+                autoDetect: 'Automaticky',
+                performanceMode: 'Režim výkonu',
+                performanceModeHint: 'Deaktivuje těžké filtry pro maximalizaci FPS',
+                stretchMode: 'Roztáhnout na celou obrazovku'
             },
             hu: {
                 title: 'Optimizer Plus',
@@ -2517,7 +1526,10 @@
                 settingsReset: '[<<] Beállítások visszaállítva. Töltse újra az oldalt.',
                 presetApplied: '[*] Preset "{name}" alkalmazva!',
                 language: 'Nyelv',
-                autoDetect: 'Automatikus'
+                autoDetect: 'Automatikus',
+                performanceMode: 'Teljesítmény mód',
+                performanceModeHint: 'Kikapcsolja a nehéz szűrőket az FPS maximalizálása érdekében',
+                stretchMode: 'Kitöltés a képernyőn (Keret nélkül)'
             },
             ro: {
                 title: 'Optimizer Plus',
@@ -2547,11 +1559,14 @@
                 streamInterceptor: 'Interceptor Stream (Dec. HW)',
                 apply: 'Aplică',
                 reset: 'Resetare',
-                settingsSaved: '[OK] Setări salvate! Reîncărcați pagina.',
-                settingsReset: '[<<] Setări resetate. Reîncărcați pagina.',
+                settingsSaved: '[OK] Setări salvate! Reîncarcați pagina.',
+                settingsReset: '[<<] Setări resetate. Reîncarcați pagina.',
                 presetApplied: '[*] Preset "{name}" aplicat!',
                 language: 'Limbă',
-                autoDetect: 'Auto-detectare'
+                autoDetect: 'Auto-detectare',
+                performanceMode: 'Mod Performanță',
+                performanceModeHint: 'Dezactivează filtrele grele pentru a maximiza FPS',
+                stretchMode: 'Întinde pe tot ecranul'
             },
             sk: {
                 title: 'Optimizer Plus',
@@ -2585,7 +1600,10 @@
                 settingsReset: '[<<] Nastavenia obnovené. Obnovte stránku.',
                 presetApplied: '[*] Preset "{name}" použitý!',
                 language: 'Jazyk',
-                autoDetect: 'Automaticky'
+                autoDetect: 'Automaticky',
+                performanceMode: 'Režim výkonu',
+                performanceModeHint: 'Deaktivuje ťažké filtre pre maximalizáciu FPS',
+                stretchMode: 'Roztiahnuť (Bez okrajov)'
             },
             sv: {
                 title: 'Optimizer Plus',
@@ -2615,109 +1633,150 @@
                 streamInterceptor: 'Stream Interceptor (HW Avk.)',
                 apply: 'Tillämpa',
                 reset: 'Återställ',
-                settingsSaved: '[OK] Inställningar sparade! Ladda om sidan.',
-                settingsReset: '[<<] Inställningar återställda. Ladda om sidan.',
+                settingsSaved: '[OK] Inställningar sparade!',
+                settingsReset: '[<<] Inställningar återställda.',
                 presetApplied: '[*] Förinställning "{name}" tillämpad!',
                 language: 'Språk',
-                autoDetect: 'Automatisk'
+                autoDetect: 'Automatisk',
+                deviceProfile: 'Enhet',
+                filterTier: 'Kvalitetsnivå',
+                adaptiveMode: 'Adaptivt läge',
+                bitrateEnforcer: 'Aggressiv bitratetvingare (V4)',
+                ultrawideMode: 'Ultrawide-läge (21:9, 32:9)',
+                ultrawideAutoDetect: 'Auto-detektera 21:9+',
+                performanceMode: 'Prestandaläge',
+                performanceModeHint: 'Inaktiverar tunga filter för att maximera FPS',
+                displaySettings: 'Skärm och Ultrawide',
+                screenInfo: 'Skärminfo',
+                fitMode: 'Visningsläge',
+                hwProfile: 'Profil',
+                stretchMode: 'Sträck ut (Utan kanter)'
             }
         }
     };
 
-    // Langue courante (détectée ou configurée)
     let currentLang = 'en';
 
-    // Fonction pour détecter la langue (simplifiée)
     function detectLanguage() {
-        // Vérifier la config sauvegardée
         if (CONFIG.language && CONFIG.language !== 'auto') {
             return CONFIG.language;
         }
 
-        // Détecter depuis le navigateur
         const browserLang = (navigator.language || navigator.userLanguage || 'en').substring(0, 2).toLowerCase();
         return I18N.translations[browserLang] ? browserLang : 'en';
     }
 
-    // Fonction pour obtenir une traduction
     function t(key, params = {}) {
         const translation = I18N.translations[currentLang]?.[key] || I18N.translations['en'][key] || key;
 
-        // Remplacer les paramètres {param}
         return translation.replace(/\{(\w+)\}/g, (match, param) => params[param] || match);
     }
 
-    // Initialiser la langue
     currentLang = detectLanguage();
 
-    // ===============================================================================
-    // ICÔNES SVG PROFESSIONNELLES
-    // ===============================================================================
+    // SVG ICONS
 
     const ICONS = {
-        logo: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
         settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
         monitor: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
         film: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>`,
         sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
-        zap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
         eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
         target: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
-        layers: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
         cpu: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>`,
         activity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
-        wifi: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>`,
-        image: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`,
-        sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`,
-        droplet: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>`,
         contrast: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z"/></svg>`,
         sparkles: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M5 19l.5 1.5L7 21l-1.5.5L5 23l-.5-1.5L3 21l1.5-.5L5 19z"/><path d="M19 5l.5 1.5L21 7l-1.5.5L19 9l-.5-1.5L17 7l1.5-.5L19 5z"/></svg>`,
-        volume: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`,
         check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
         x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
         refresh: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
-        save: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`,
-        chevronDown: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>`,
-        play: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
         crosshair: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>`,
-        globe: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
-        gauge: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M12 2a10 10 0 0 1 10 10"/><line x1="12" y1="12" x2="12" y2="2"/><line x1="12" y1="12" x2="17" y2="7"/></svg>`,
-        shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
-        maximize: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>`,
-        minimize: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>`
     };
 
-    // ===============================================================================
-    // STYLES CSS POUR L'INTERFACE - THÈME BOOSTEROID
-    // Couleurs: Fond #060912, Conteneur #131721, Texte #FFFFFF, Police Sofia Sans 12px
-    // ===============================================================================
+    // UI STYLES - BOOSTEROID THEME
 
     const OPTIMIZER_STYLES = `
-        /* ========================================================================== */
         /* OPTIMIZER+ CSS - Native Boosteroid Typography & Layout                     */
-        /* ========================================================================== */
 
-        /* Base Section */
-        #optimizer-section {
-            font-family: 'Sofia Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            font-size: 12px;
-            line-height: 1.4;
-            font-weight: 400;
-            color: #fff;
-            margin-top: 10px;
+        /* Mobile/PWA Fix for .m_lan_wrapper scrollability (iOS Landscape) */
+        .m_lan_wrapper.menu-open,
+        .m_lan_wrapper {
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            max-height: 100vh !important;
+            max-height: 100dvh !important;
+            padding-bottom: 80px !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
         }
 
-        /* Menu Title - Section Headers */
-        #optimizer-section .menu_title {
-            font-size: 12px;
-            font-weight: 600;
+        /* Stretch Mode (No Borders) - Bypass Boosteroid Containers */
+        html.optimizer-stretch-mode,
+        html.optimizer-stretch-mode body,
+        html.optimizer-stretch-mode #root,
+        html.optimizer-stretch-mode #app {
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            transform: none !important; 
+        }
+
+        html.optimizer-stretch-mode #app div:not([id*="optimizer"]):not([class*="optimizer"]) {
+            transform: none !important;
+        }
+
+        html.optimizer-stretch-mode [class*="video"],
+        html.optimizer-stretch-mode [class*="stream"],
+        html.optimizer-stretch-mode [class*="player"],
+        html.optimizer-stretch-mode video,
+        html.optimizer-stretch-mode canvas {
+            width: 100% !important;
+            height: 100% !important;
+            min-width: 100% !important;
+            min-height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            object-fit: fill !important; 
+            object-position: center !important;
+            transform: none !important; 
+            position: fixed !important;
+            left: 0 !important;
+            top: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            box-sizing: border-box !important;
+        }
+
+        .optimizer-injected {
             color: #fff;
-            margin: 16px 0 8px 0;
-            padding: 0;
+            margin-top: 0;
+        }
+
+        /* Prevent Boosteroid's responsive CSS from hiding our injected sections */
+        div.menu_block.optimizer-injected {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            height: auto !important;
+        }
+
+        div.menu_title.optimizer-injected {
+            visibility: visible !important;
+            opacity: 1 !important;
+            height: auto !important;
+        }
+
+        /* Menu Title - inherit native Boosteroid styles, no overrides */
+        .optimizer-injected .menu_title {
         }
 
         /* Menu Switch Block - Row Container */
-        #optimizer-section .menu_switch_block {
+        .optimizer-injected .menu_switch_block {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -2727,21 +1786,21 @@
             flex-wrap: wrap;
         }
 
-        #optimizer-section .menu_switch_block.top_20 {
+        .optimizer-injected .menu_switch_block.top_20 {
             margin-top: 0;
         }
 
         /* Menu Title Group - Labels */
-        #optimizer-section .menu_title_group {
+        .optimizer-injected .menu_title_group {
             display: flex;
             align-items: center;
             gap: 6px;
             flex: 1;
-            min-width: 80px; /* v3.7.2: Garantir espace minimum pour le texte */
+            min-width: 80px;
             overflow: visible;
         }
 
-        #optimizer-section .menu_title_group p {
+        .optimizer-injected .menu_title_group p {
             font-size: 12px;
             font-weight: 400;
             color: rgba(255, 255, 255, 0.85);
@@ -2750,12 +1809,12 @@
             overflow: visible;
         }
 
-        #optimizer-section .menu_title_group span {
+        .optimizer-injected .menu_title_group span {
             white-space: nowrap;
             overflow: visible;
         }
 
-        #optimizer-section .menu_title_group svg {
+        .optimizer-injected .menu_title_group svg {
             width: 14px;
             height: 14px;
             opacity: 0.7;
@@ -2763,7 +1822,7 @@
         }
 
         /* Badge Version */
-        #optimizer-section .optimizer-badge {
+        .optimizer-injected .optimizer-badge {
             font-size: 10px;
             font-weight: 500;
             background: #00a3ff;
@@ -2774,11 +1833,7 @@
             vertical-align: middle;
         }
 
-        /* ========================================================================== */
-        /* CUSTOM SLIDERS - Div-based pour compatibilité                              */
-        /* ========================================================================== */
-
-        #optimizer-section .optimizer-slider {
+        .optimizer-injected .optimizer-slider {
             position: relative;
             width: 100%;
             height: 20px;
@@ -2789,7 +1844,7 @@
             -webkit-user-select: none;
         }
 
-        #optimizer-section .optimizer-slider-track {
+        .optimizer-injected .optimizer-slider-track {
             position: absolute;
             width: 100%;
             height: 4px;
@@ -2797,7 +1852,7 @@
             border-radius: 2px;
         }
 
-        #optimizer-section .optimizer-slider-fill {
+        .optimizer-injected .optimizer-slider-fill {
             position: absolute;
             height: 4px;
             background: #22c55e;
@@ -2805,7 +1860,7 @@
             pointer-events: none;
         }
 
-        #optimizer-section .optimizer-slider-thumb {
+        .optimizer-injected .optimizer-slider-thumb {
             position: absolute;
             width: 14px;
             height: 14px;
@@ -2817,17 +1872,16 @@
             transition: transform 0.1s ease;
         }
 
-        #optimizer-section .optimizer-slider:hover .optimizer-slider-thumb {
+        .optimizer-injected .optimizer-slider:hover .optimizer-slider-thumb {
             transform: translateX(-50%) scale(1.15);
         }
 
-        #optimizer-section .optimizer-slider:active .optimizer-slider-thumb {
+        .optimizer-injected .optimizer-slider:active .optimizer-slider-thumb {
             transform: translateX(-50%) scale(1.2);
             box-shadow: 0 2px 8px rgba(34, 197, 94, 0.5);
         }
 
-        /* Fallback pour input[type=range] - hidden mais fonctionnel */
-        #optimizer-section input[type="range"] {
+        .optimizer-injected input[type="range"] {
             position: absolute;
             width: 100%;
             height: 20px;
@@ -2838,30 +1892,50 @@
         }
 
         /* Legacy track styling (hidden) */
-        #optimizer-section input[type="range"]::-webkit-slider-runnable-track {
+        .optimizer-injected input[type="range"]::-webkit-slider-runnable-track {
             height: 4px;
             border-radius: 2px;
             background: rgba(255, 255, 255, 0.15);
         }
 
-        #optimizer-section input[type="range"]::-moz-range-track {
+        .optimizer-injected input[type="range"]::-moz-range-track {
             height: 4px;
             border-radius: 2px;
             background: rgba(255, 255, 255, 0.15);
         }
 
-        #optimizer-section input[type="range"]::-moz-range-progress {
+        .optimizer-injected input[type="range"]::-moz-range-progress {
             background: #22c55e;
             height: 4px;
             border-radius: 2px;
         }
 
-        /* ========================================================================== */
-        /* SELECT - Dropdowns                                                         */
-        /* ========================================================================== */
+        /* Toggle Switch — Inherits native Boosteroid .switch.toggle-switch styles */
 
-        #optimizer-section select,
-        #optimizer-section .optimizer-select {
+        /* Gray out disabled elements (Performance Mode active) */
+        .optimizer-injected input[disabled],
+        .optimizer-injected select[disabled],
+        .optimizer-injected .switch input[disabled] + .slider.round {
+            opacity: 0.4 !important;
+            pointer-events: none !important;
+            cursor: not-allowed !important;
+        }
+
+        .optimizer-injected .optimizer-slider:has(input[disabled]) {
+            opacity: 0.4 !important;
+            pointer-events: none !important;
+            cursor: not-allowed !important;
+        }
+
+        .optimizer-injected .menu_switch_block:has(input[disabled]) {
+            opacity: 0.5 !important;
+            pointer-events: none !important;
+        }
+
+        /* SELECT - Dropdowns                                                         */
+
+        .optimizer-injected select,
+        .optimizer-injected .optimizer-select {
             font-size: 12px;
             font-family: inherit;
             padding: 6px 10px;
@@ -2871,39 +1945,36 @@
             border-radius: 4px;
             cursor: pointer;
             outline: none;
-            flex-shrink: 0; /* v3.7.2: Ne pas réduire le select */
-            max-width: 180px; /* v3.7.2: Limite pour laisser place au label */
+            flex-shrink: 0;
+            max-width: 180px;
         }
 
-        /* v3.7.2: Style spécifique pour le sélecteur de résolution */
         #optimizer-res-select {
             min-width: 140px;
             max-width: 160px;
         }
 
-        #optimizer-section select:focus,
-        #optimizer-section .optimizer-select:focus {
+        .optimizer-injected select:focus,
+        .optimizer-injected .optimizer-select:focus {
             border-color: #00a3ff;
         }
 
-        #optimizer-section select option,
-        #optimizer-section .optimizer-select option {
+        .optimizer-injected select option,
+        .optimizer-injected .optimizer-select option {
             background: #131721;
             color: #fff;
         }
 
-        /* ========================================================================== */
         /* PRESETS - Button Grid                                                      */
-        /* ========================================================================== */
 
-        #optimizer-section .optimizer-presets {
+        .optimizer-injected .optimizer-presets {
             display: flex;
             gap: 6px;
             flex-wrap: wrap;
             width: 100%;
         }
 
-        #optimizer-section .optimizer-preset-btn {
+        .optimizer-injected .optimizer-preset-btn {
             font-family: inherit;
             font-size: 11px;
             font-weight: 500;
@@ -2920,42 +1991,40 @@
             gap: 4px;
         }
 
-        #optimizer-section .optimizer-preset-btn svg {
+        .optimizer-injected .optimizer-preset-btn svg {
             width: 12px;
             height: 12px;
             flex-shrink: 0;
         }
 
-        #optimizer-section .optimizer-preset-btn:hover {
+        .optimizer-injected .optimizer-preset-btn:hover {
             border-color: rgba(0, 163, 255, 0.5);
             background: rgba(0, 163, 255, 0.1);
         }
 
-        #optimizer-section .optimizer-preset-btn.active {
+        .optimizer-injected .optimizer-preset-btn.active {
             background: #00a3ff;
             border-color: #00a3ff;
             color: #fff;
         }
 
-        #optimizer-section .optimizer-preset-perfect {
+        .optimizer-injected .optimizer-preset-perfect {
             border-color: rgba(0, 136, 204, 0.6);
         }
 
-        #optimizer-section .optimizer-preset-perfect:hover {
+        .optimizer-injected .optimizer-preset-perfect:hover {
             background: linear-gradient(135deg, rgba(0, 163, 255, 0.2), rgba(0, 102, 204, 0.2));
             border-color: #00a3ff;
         }
 
-        #optimizer-section .optimizer-preset-perfect.active {
+        .optimizer-injected .optimizer-preset-perfect.active {
             background: linear-gradient(135deg, #00a3ff, #0066cc);
             border-color: #00a3ff;
         }
 
-        /* ========================================================================== */
         /* STATUS INDICATOR                                                           */
-        /* ========================================================================== */
 
-        #optimizer-section .optimizer-status {
+        .optimizer-injected .optimizer-status {
             display: flex;
             align-items: center;
             gap: 6px;
@@ -2963,7 +2032,7 @@
             color: rgba(255, 255, 255, 0.85);
         }
 
-        #optimizer-section .optimizer-status-dot {
+        .optimizer-injected .optimizer-status-dot {
             width: 6px;
             height: 6px;
             border-radius: 50%;
@@ -2971,11 +2040,11 @@
             animation: optimizer-pulse 2s infinite;
         }
 
-        #optimizer-section .optimizer-status-dot.warning {
+        .optimizer-injected .optimizer-status-dot.warning {
             background: #f59e0b;
         }
 
-        #optimizer-section .optimizer-status-dot.error {
+        .optimizer-injected .optimizer-status-dot.error {
             background: #ef4444;
         }
 
@@ -2984,11 +2053,9 @@
             50% { opacity: 0.5; }
         }
 
-        /* ========================================================================== */
         /* BUTTONS                                                                    */
-        /* ========================================================================== */
 
-        #optimizer-section .optimizer-btn {
+        .optimizer-injected .optimizer-btn {
             font-family: inherit;
             font-size: 12px;
             font-weight: 500;
@@ -3005,29 +2072,27 @@
             gap: 6px;
         }
 
-        #optimizer-section .optimizer-btn:hover {
+        .optimizer-injected .optimizer-btn:hover {
             background: #0082cc;
         }
 
-        #optimizer-section .optimizer-btn.secondary {
+        .optimizer-injected .optimizer-btn.secondary {
             background: transparent;
             border: 1px solid rgba(255, 255, 255, 0.18);
             color: rgba(255, 255, 255, 0.85);
         }
 
-        #optimizer-section .optimizer-btn.secondary:hover {
+        .optimizer-injected .optimizer-btn.secondary:hover {
             background: rgba(255, 255, 255, 0.08);
         }
 
-        #optimizer-section .optimizer-btn svg {
+        .optimizer-injected .optimizer-btn svg {
             width: 14px;
             height: 14px;
             flex-shrink: 0;
         }
 
-        /* ========================================================================== */
         /* NOTIFICATION                                                               */
-        /* ========================================================================== */
 
         #optimizer-notification {
             position: fixed;
@@ -3045,63 +2110,59 @@
             backdrop-filter: blur(10px);
         }
 
-        /* ========================================================================== */
         /* RESPONSIVE                                                                 */
-        /* ========================================================================== */
 
         @media (max-width: 767px) {
-            #optimizer-section .menu_title_group p {
+            .optimizer-injected .menu_title_group p {
                 font-size: 11px;
             }
 
-            #optimizer-section .optimizer-preset-btn {
+            .optimizer-injected .optimizer-preset-btn {
                 font-size: 10px;
                 padding: 5px 8px;
                 min-height: 32px;
             }
 
-            #optimizer-section input[type="range"]::-webkit-slider-thumb {
+            .optimizer-injected input[type="range"]::-webkit-slider-thumb {
                 width: 18px;
                 height: 18px;
             }
 
-            #optimizer-section input[type="range"]::-moz-range-thumb {
+            .optimizer-injected input[type="range"]::-moz-range-thumb {
                 width: 18px;
                 height: 18px;
             }
         }
 
         @media (pointer: coarse) {
-            #optimizer-section .optimizer-preset-btn {
+            .optimizer-injected .optimizer-preset-btn {
                 min-height: 36px;
                 padding: 8px 12px;
             }
 
-            #optimizer-section input[type="range"]::-webkit-slider-thumb {
+            .optimizer-injected input[type="range"]::-webkit-slider-thumb {
                 width: 20px;
                 height: 20px;
             }
 
-            #optimizer-section input[type="range"]::-moz-range-thumb {
+            .optimizer-injected input[type="range"]::-moz-range-thumb {
                 width: 20px;
                 height: 20px;
             }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            #optimizer-section *,
+            .optimizer-injected *,
             #optimizer-notification {
                 animation: none !important;
                 transition: none !important;
             }
         }
 
-        /* ========================================================================== */
-        /* v3.6.3 SCREEN INFO & HW BADGE                                              */
-        /* ========================================================================== */
+        /* SCREEN INFO & HW BADGE */
 
         /* Screen info display in-game */
-        #optimizer-section .optimizer-screen-info {
+        .optimizer-injected .optimizer-screen-info {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -3113,20 +2174,20 @@
             font-size: 11px;
         }
 
-        #optimizer-section .optimizer-screen-info svg {
+        .optimizer-injected .optimizer-screen-info svg {
             width: 14px;
             height: 14px;
             color: #00a3ff;
             flex-shrink: 0;
         }
 
-        #optimizer-section .optimizer-screen-info .screen-detected {
+        .optimizer-injected .optimizer-screen-info .screen-detected {
             color: #00a3ff;
             font-weight: 600;
             font-family: 'SF Mono', 'Consolas', monospace;
         }
 
-        #optimizer-section .optimizer-screen-info .screen-ratio {
+        .optimizer-injected .optimizer-screen-info .screen-ratio {
             color: rgba(255, 255, 255, 0.5);
             font-size: 10px;
             padding: 2px 6px;
@@ -3135,7 +2196,7 @@
             margin-left: auto;
         }
 
-        #optimizer-section .optimizer-hw-badge {
+        .optimizer-injected .optimizer-hw-badge {
             display: flex;
             align-items: center;
             justify-content: center;
@@ -3143,21 +2204,20 @@
             height: 20px;
         }
 
-        #optimizer-section .optimizer-hw-badge svg {
+        .optimizer-injected .optimizer-hw-badge svg {
             width: 14px;
             height: 14px;
             color: rgba(255, 255, 255, 0.5);
         }
 
-        /* ========================================================================== */
-        /* v3.6.3 DASHBOARD FLOATING WIDGET                                           */
-        /* ========================================================================== */
+        /* DASHBOARD FLOATING WIDGET */
 
         #optimizer-dashboard-widget {
             position: fixed;
             right: 20px;
-            bottom: 180px; /* En dessous du chatbot Boosteroid */
-            z-index: 99998;
+            bottom: 180px;
+            z-index: 9999999 !important;
+            pointer-events: auto !important;
             font-family: 'Sofia Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
 
@@ -3174,6 +2234,8 @@
             box-shadow: 0 4px 20px rgba(0, 163, 255, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
+            z-index: 9999999 !important;
+            pointer-events: auto !important;
         }
 
         #optimizer-dashboard-widget .opt-widget-btn:hover {
@@ -3191,10 +2253,10 @@
             color: white;
             stroke: white;
             fill: none;
-            pointer-events: none; /* Laisser le bouton parent recevoir les clics */
+            pointer-events: none;
         }
 
-        /* Status dot (indicateur vert) */
+        /* Status dot */
         #optimizer-dashboard-widget .opt-status-dot {
             position: absolute;
             top: 2px;
@@ -3206,7 +2268,7 @@
             border: 2px solid #fff;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
             animation: opt-status-pulse 2s infinite;
-            pointer-events: none; /* Laisser le bouton parent recevoir les clics */
+            pointer-events: none;
         }
 
         @keyframes opt-status-pulse {
@@ -3214,7 +2276,6 @@
             50% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
         }
 
-        /* Panel déroulant */
         #optimizer-dashboard-widget .opt-widget-panel {
             position: absolute;
             bottom: 70px;
@@ -3230,6 +2291,8 @@
             visibility: hidden;
             transform: translateY(10px) scale(0.95);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 9999999 !important;
+            pointer-events: auto !important;
         }
 
         #optimizer-dashboard-widget .opt-widget-panel.open {
@@ -3386,7 +2449,6 @@
             color: rgba(255, 255, 255, 0.4);
         }
 
-        /* Styles pour l'info écran détecté */
         #optimizer-dashboard-widget .opt-widget-screen-info {
             display: flex;
             flex-wrap: wrap;
@@ -3430,116 +2492,13 @@
             margin-left: auto;
         }
 
-        /* Style pour les options de résolution recommandées */
         #optimizer-dashboard-widget .opt-widget-select option[value="auto"] {
             font-weight: bold;
             background: rgba(0, 163, 255, 0.15);
         }
 
-        /* ========================================================================== */
-        /* v3.7.3-beta: FIX WIDGET MOBILE LANDSCAPE                                   */
-        /* Le panel s'affiche correctement en mode paysage sur mobile                 */
-        /* ========================================================================== */
+        /* Hide Boosteroid's "Brighter image" option */
 
-        /* Mobile landscape: écran large mais peu haut */
-        @media screen and (max-height: 500px) and (orientation: landscape) {
-            #optimizer-dashboard-widget {
-                bottom: 8px !important;
-                right: 8px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-panel {
-                position: fixed !important;
-                bottom: auto !important;
-                top: 50% !important;
-                right: 60px !important;
-                left: auto !important;
-                transform: translateY(-50%) scale(0.95) !important;
-                max-height: calc(100vh - 20px) !important;
-                max-width: calc(100vw - 80px) !important;
-                width: 260px !important;
-                overflow-y: auto !important;
-                padding: 12px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-panel.open {
-                transform: translateY(-50%) scale(1) !important;
-            }
-
-            /* Rendre le panel plus compact en paysage */
-            #optimizer-dashboard-widget .opt-widget-header {
-                margin-bottom: 8px !important;
-                padding-bottom: 8px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-screen-info {
-                padding: 6px 8px !important;
-                margin-bottom: 8px !important;
-                font-size: 10px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-status {
-                padding: 6px 8px !important;
-                margin-bottom: 8px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-row {
-                margin-bottom: 8px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-select {
-                padding: 8px 10px !important;
-                font-size: 12px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-action-btn {
-                padding: 8px 10px !important;
-                font-size: 11px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-footer {
-                margin-top: 8px !important;
-                padding-top: 6px !important;
-            }
-
-            /* Bouton principal plus petit */
-            #optimizer-dashboard-widget .opt-floating-btn {
-                width: 44px !important;
-                height: 44px !important;
-            }
-        }
-
-        /* Extra petit écran en paysage (très peu de hauteur) */
-        @media screen and (max-height: 400px) and (orientation: landscape) {
-            #optimizer-dashboard-widget .opt-widget-panel {
-                width: 240px !important;
-                padding: 10px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-title {
-                font-size: 12px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-version {
-                font-size: 9px !important;
-                padding: 1px 4px !important;
-            }
-
-            #optimizer-dashboard-widget .opt-screen-ratio {
-                display: none !important;
-            }
-
-            #optimizer-dashboard-widget .opt-widget-footer {
-                display: none !important;
-            }
-        }
-
-        /* ========================================================================== */
-        /* MASQUER L'OPTION "IMAGE PLUS LUMINEUSE" DE BOOSTEROID                      */
-        /* Ciblage PRÉCIS: uniquement les toggles avec ces attributs spécifiques      */
-        /* ========================================================================== */
-
-        /* Masquer uniquement les blocs toggle avec ID/class contenant "brighter" */
         .menu_switch_block:has(input[id*="brighter"]),
         .menu_switch_block:has(input[name*="brighter"]),
         .menu_switch_block:has([data-setting*="brighter"]),
@@ -3562,44 +2521,23 @@
         console.log('[Optimizer+] CSS injected with Boosteroid-native typography');
     }
 
-    // ===============================================================================
-    // INITIALISATION DU CONTEXTE WINDOW
-    // ===============================================================================
+    // WINDOW CONTEXT
 
-    let windowCtx;
+    // @grant none: window is the page window, no sandbox
+    let windowCtx = window;
 
-    if (self.unsafeWindow) {
-        console.log("[Optimizer+] Mode unsafeWindow activé");
-        windowCtx = self.unsafeWindow;
-    } else {
-        console.log("[Optimizer+] Mode window standard");
-        windowCtx = self.window;
-    }
-
-    // ===============================================================================
-    // VARIABLES GLOBALES
-    // ===============================================================================
-
-    let qualityLevel = 75; // Niveau de qualité global par défaut (0-100)
-
-    // ===============================================================================
-    // ÉTAT DE LA SESSION - Gestion centralisée
-    // ===============================================================================
+    // SESSION STATE
 
     const SessionState = {
-        isGameActive: false,      // True si une instance de jeu est en cours
-        isMenuOpen: false,        // True si le menu d'options est ouvert
-        isUIInjected: false,      // True si notre UI est injectée
-        videoElement: null,       // Référence à la vidéo de streaming
-        menuObserver: null,       // Observer pour le menu
-        videoObserver: null,      // Observer pour la vidéo
-        cleanupHandlers: [],      // Handlers à nettoyer
-        lastSessionId: null,      // Dernier sessionId détecté
-        lastCheckTime: 0,         // Timestamp du dernier check
-        retryCount: 0,            // Compteur de tentatives d'injection
-        maxRetries: 5,            // Max retries avant reset forcé
+        isGameActive: false,
+        isMenuOpen: false,
+        isUIInjected: false,
+        videoElement: null,
+        lastSessionId: null,
+        lastCheckTime: 0,
+        retryCount: 0,
+        maxRetries: 5,
 
-        // Reset complet de l'état
         reset() {
             this.isGameActive = false;
             this.isMenuOpen = false;
@@ -3607,9 +2545,9 @@
             this.videoElement = null;
             this.lastSessionId = null;
             this.retryCount = 0;
+            document.querySelectorAll('.optimizer-injected').forEach(el => el.remove());
         },
 
-        // Vérifier si on a changé de session (nouveau jeu)
         hasSessionChanged() {
             const currentSessionId = this.extractSessionId();
             if (currentSessionId && this.lastSessionId && currentSessionId !== this.lastSessionId) {
@@ -3622,28 +2560,23 @@
             return false;
         },
 
-        // Extraire le sessionId de l'URL
         extractSessionId() {
             try {
                 const url = new URL(window.location.href);
                 return url.searchParams.get('sessionId') ||
-                       url.searchParams.get('sessionid') ||
-                       url.searchParams.get('session') ||
-                       null;
+                    url.searchParams.get('sessionid') ||
+                    url.searchParams.get('session') ||
+                    null;
             } catch (e) {
                 return null;
             }
         },
 
-        // Forcer la réinjection UI (après changement de jeu ou bug)
         forceReinject() {
             console.log('[Optimizer+] Réinjection forcée de l\'UI');
 
-            // Nettoyer l'ancienne UI
-            const oldUI = document.getElementById('optimizer-section');
-            if (oldUI) {
-                oldUI.remove();
-            }
+            const oldUI = document.querySelectorAll('.optimizer-injected');
+            oldUI.forEach(el => el.remove());
 
             this.isUIInjected = false;
             this.retryCount = 0;
@@ -3651,25 +2584,24 @@
             return true;
         },
 
-        // Méthode de récupération en cas d'état incohérent
         selfHeal() {
             const now = Date.now();
 
-            // Éviter les checks trop fréquents
             if (now - this.lastCheckTime < 2000) {
                 return false;
             }
             this.lastCheckTime = now;
 
-            // 1. Vérifier le changement de session
             if (this.hasSessionChanged()) {
                 this.forceReinject();
                 return true;
             }
 
-            // 2. État incohérent: UI marquée injectée mais absente du DOM
-            if (this.isUIInjected && !document.getElementById('optimizer-section')) {
-                console.log('[Optimizer+] Self-heal: UI marquée présente mais absente du DOM');
+            const activeMenu = findOpenOptionsMenu();
+
+            // Inconsistent state: UI flagged as injected but missing or incomplete in the active menu
+            if (this.isUIInjected && (!activeMenu || !isUIFullyInjected(activeMenu))) {
+                console.log('[Optimizer+] Self-heal: UI marquée présente mais absente ou incomplète dans le menu actif');
                 this.isUIInjected = false;
                 this.retryCount++;
 
@@ -3680,53 +2612,69 @@
                 return true;
             }
 
-            // 3. UI présente dans le DOM mais pas marquée
-            if (!this.isUIInjected && document.getElementById('optimizer-section')) {
+            // UI present in the DOM but not flagged
+            if (!this.isUIInjected && document.querySelector('.optimizer-injected')) {
                 console.log('[Optimizer+] Self-heal: UI présente mais pas marquée');
                 this.isUIInjected = true;
                 return true;
-            }
-
-            // 4. Menu fermé mais UI toujours marquée comme injectée
-            if (this.isUIInjected && !document.querySelector('#menu.menu_desktop[style*="block"]')) {
-                // C'est normal, le menu peut être caché mais l'UI existe encore
-                // On ne fait rien sauf si l'UI n'est vraiment plus dans le DOM
             }
 
             return false;
         }
     };
 
-    // ===============================================================================
-    // STORAGE - Sauvegarde des paramètres
-    // ===============================================================================
+    // STORAGE
 
     const Storage = {
-        get: function(key, defaultValue) {
+        get: function (key, defaultValue) {
             try {
-                if (typeof GM_getValue !== 'undefined') {
-                    return GM_getValue(key, defaultValue);
-                }
                 const stored = localStorage.getItem('optimizer_' + key);
                 return stored !== null ? JSON.parse(stored) : defaultValue;
-            } catch(e) {
+            } catch (e) {
                 return defaultValue;
             }
         },
 
-        set: function(key, value) {
+        set: function (key, value) {
             try {
-                if (typeof GM_setValue !== 'undefined') {
-                    GM_setValue(key, value);
-                }
                 localStorage.setItem('optimizer_' + key, JSON.stringify(value));
-            } catch(e) {
+            } catch (e) {
                 console.warn('[Optimizer+] Erreur sauvegarde:', e);
             }
         }
     };
 
-    // v3.7.2: Détecter si nouvelle session (reset presets si sessionId différent)
+    // Persist and reload only what the UI controls. streaming/performance are internal
+    // tuning versioned with the script: reloading them from an old save would override
+    // new defaults.
+    const PERSISTED_KEYS = ['filters', 'enhancer', 'resolution', 'display', 'drm', 'language'];
+    function pickPersisted(config) {
+        const out = {};
+        if (!isPlainObject(config)) return out;
+        for (const k of PERSISTED_KEYS) {
+            if (config[k] !== undefined) out[k] = config[k];
+        }
+        return out;
+    }
+
+    let saveTimeout = null;
+    function saveConfig(debounced = false) {
+        if (debounced) {
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                Storage.set('config', pickPersisted(CONFIG));
+                saveTimeout = null;
+            }, 1000);
+        } else {
+            if (saveTimeout) {
+                clearTimeout(saveTimeout);
+                saveTimeout = null;
+            }
+            Storage.set('config', pickPersisted(CONFIG));
+        }
+    }
+
+    // New session (different sessionId) resets presets and filters
     function getCurrentSessionId() {
         const url = window.location.href;
         const match = url.match(/sessionId=([a-f0-9-]+)/i);
@@ -3737,13 +2685,10 @@
     const savedSessionId = Storage.get('lastSessionId', null);
     const isNewSession = currentSessionId && currentSessionId !== savedSessionId;
 
-    // Charger les paramètres sauvegardés
     const savedConfig = Storage.get('config', null);
     if (savedConfig) {
-        // v3.7.2: Si nouvelle session, reset les presets et filtres
         if (isNewSession) {
-            console.log('[Optimizer+] Nouvelle session détectée, reset des presets');
-            // Garder les paramètres de résolution mais reset les filtres
+            console.log('[Optimizer+] Nouvelle session d\u00E9tect\u00E9e, reset des presets');
             savedConfig.filters = {
                 enabled: false,
                 preset: null,
@@ -3757,296 +2702,462 @@
                 deband: { enabled: false, strength: 0.3 }
             };
             savedConfig.enhancer = {
-                enabled: false,
+                enabled: true,
                 sharpness: 0.45,
-                contrast: 1.0,
-                saturation: 1.0,
-                brightness: 1.0
+                contrast: 1.08,
+                saturation: 1.05,
+                brightness: 1.02
             };
-            // Sauvegarder le nouveau sessionId
             Storage.set('lastSessionId', currentSessionId);
         }
-        Object.assign(CONFIG, savedConfig);
+        // Deep merge so saved configs do not wipe newly added default keys
+        function deepMerge(target, source) {
+            if (!isPlainObject(target) || !isPlainObject(source)) return;
+
+            for (const key of Object.keys(source)) {
+                if (BLOCKED_MERGE_KEYS.has(key)) continue;
+
+                const sourceValue = source[key];
+                if (isPlainObject(sourceValue)) {
+                    if (!isPlainObject(target[key])) target[key] = {};
+                    deepMerge(target[key], sourceValue);
+                } else {
+                    target[key] = sourceValue;
+                }
+            }
+        }
+        deepMerge(CONFIG, pickPersisted(savedConfig));
+
+        // The enhancer is always on; neutral saved values (1.0) fall back to the defaults
+        CONFIG.enhancer.enabled = true;
+        if (CONFIG.enhancer.contrast === 1.0) CONFIG.enhancer.contrast = 1.08;
+        if (CONFIG.enhancer.saturation === 1.0) CONFIG.enhancer.saturation = 1.05;
+        if (CONFIG.enhancer.brightness === 1.0) CONFIG.enhancer.brightness = 1.02;
+
+        // Stretch mode never persists across page loads
+        if (CONFIG.display) {
+            CONFIG.display.stretchMode = false;
+        }
+        document.documentElement.classList.remove('optimizer-stretch-mode');
+
     } else if (currentSessionId) {
-        // Première utilisation, sauvegarder le sessionId
         Storage.set('lastSessionId', currentSessionId);
     }
 
-    // v3.7.2: Initialiser la résolution avec la résolution NATIVE de l'écran client
-    // Si pas de config sauvegardée, ou si mode auto activé (isAuto=true)
     if (!savedConfig || !savedConfig.resolution || savedConfig.resolution.isAuto === true) {
         const nativeScreen = SmartResolutionDetector.getScreenDimensions();
-        CONFIG.resolution.width = nativeScreen.width;
-        CONFIG.resolution.height = nativeScreen.height;
+        const bestMatch = SmartResolutionDetector.findBestMatch(nativeScreen.width, nativeScreen.height);
+
+        if (bestMatch) {
+            CONFIG.resolution.width = bestMatch.w;
+            CONFIG.resolution.height = bestMatch.h;
+        } else {
+            CONFIG.resolution.width = nativeScreen.width;
+            CONFIG.resolution.height = nativeScreen.height;
+        }
         CONFIG.resolution.pixelRatio = nativeScreen.devicePixelRatio || 1;
         CONFIG.resolution.isAuto = true;
-        console.log(`[Optimizer+] Auto-resolution (native): ${nativeScreen.width}x${nativeScreen.height}`);
+        console.log(`[Optimizer+] Auto-resolution au d\u00E9marrage: ${CONFIG.resolution.width}x${CONFIG.resolution.height}`);
     }
 
-    // Charger le niveau de qualité sauvegardé
-    const savedQuality = Storage.get('qualityLevel', null);
-    if (savedQuality !== null) {
-        qualityLevel = savedQuality;
-    }
-
-    // v3.7.2: Réinitialiser la langue après chargement de la config
-    // Car detectLanguage() est appelé avant le chargement depuis Storage
+    // detectLanguage() first ran before the saved config was loaded
     currentLang = detectLanguage();
     console.log(`[Optimizer+] Langue active: ${currentLang} (config: ${CONFIG.language})`);
 
-    // ===============================================================================
-    // HOOK RESOLUTION - Force 4K/8K
-    // ===============================================================================
+    // HOOK RESOLUTION
+
+    // Boosteroid may apply a new resolution live or only at the next page load: report
+    // what the stream actually does instead of assuming.
+    let confirmTimer = null;
+    function confirmResolution(width, height) {
+        clearTimeout(confirmTimer);
+        confirmTimer = setTimeout(() => {
+            const video = videoEnhancer.videoElement;
+            if (!video || !video.videoWidth) return;
+            const applied = Math.abs(video.videoWidth - width) <= width * 0.1 && Math.abs(video.videoHeight - height) <= height * 0.1;
+            showNotification(t(applied ? 'resAppliedNotif' : 'resReloadNotif', { res: `${video.videoWidth}x${video.videoHeight}` }), applied ? 'success' : 'info');
+        }, 6000);
+    }
 
     function hookResolution() {
-        const { width, height, pixelRatio } = CONFIG.resolution;
+        // Auto mode never spoofs above native: a 4K spoof on a 1080p screen offsets the
+        // mouse, wastes bandwidth and decodes 4K for nothing.
+
+        if (CONFIG.resolution.isAuto) {
+            // Undo a manual choice made earlier in this page
+            for (const prop of ['width', 'height', 'availWidth', 'availHeight']) delete window.screen[prop];
+            if (_realDprDescriptor) Object.defineProperty(windowCtx, 'devicePixelRatio', _realDprDescriptor);
+            console.log(`[Optimizer+] Résolution auto (native): ${_realScreen.width}x${_realScreen.height} @${_realScreen.pixelRatio}x`);
+            CONFIG.resolution.width = _realScreen.width;
+            CONFIG.resolution.height = _realScreen.height;
+            CONFIG.resolution.pixelRatio = _realScreen.pixelRatio;
+            return;
+        }
+
+        // Manual mode: honour the chosen resolution (even above native) and scale
+        // pixelRatio so mouse coordinates stay aligned
+        const width = CONFIG.resolution.width;
+        const height = CONFIG.resolution.height;
+        const pixelRatio = Math.max(1, Math.round((width / _realScreen.width) * 10) / 10);
 
         try {
-            delete windowCtx.screen;
-            // v3.6.4: Remplacement de __defineGetter__ déprécié par Object.defineProperty
-            Object.defineProperty(windowCtx, 'screen', {
-                get: function() {
-                    return {
-                        width: width,
-                        height: height,
-                        availWidth: width,
-                        availHeight: height,
-                        availLeft: 0,
-                        availTop: 0,
-                        colorDepth: 30,     // HDR support
-                        isExtended: false,
-                        pixelDepth: 30,
-                        orientation: {
-                            type: 'landscape-primary',
-                            angle: 0
-                        }
-                    };
-                },
-                configurable: true
-            });
+            // Redefine only the dimensions on the real Screen object so orientation, lock()
+            // and identity stay intact
+            const spoofedDims = { width, height, availWidth: width, availHeight: height };
+            for (const [prop, value] of Object.entries(spoofedDims)) {
+                try {
+                    Object.defineProperty(window.screen, prop, { get: () => value, configurable: true });
+                } catch (e) { /* not redefinable in this browser */ }
+            }
 
-            delete windowCtx.devicePixelRatio;
             Object.defineProperty(windowCtx, 'devicePixelRatio', {
                 get: () => pixelRatio,
                 configurable: true
             });
 
-            // NOTE: On ne hook PAS innerWidth/innerHeight car cela bloque les événements souris
-            // Le hook screen + devicePixelRatio suffit pour forcer la résolution côté serveur
+            // innerWidth/innerHeight are not hooked: doing so breaks mouse events
 
-            console.log(`[Optimizer+] Résolution forcée: ${width}x${height} @${pixelRatio}x`);
-        } catch(e) {
+            console.log(`[Optimizer+] Résolution forcée: ${width}x${height} @${pixelRatio}x (cappée à natif ${_realScreen.width}x${_realScreen.height})`);
+        } catch (e) {
             console.error('[Optimizer+] Erreur hook résolution:', e);
         }
     }
 
-    // ===============================================================================
-    // HOOK CODECS - Force AV1/HEVC/VP9
-    // ===============================================================================
+    // HOOK CODECS
 
+    let _hookCodecsInstalled = false;
     function hookCodecs() {
-        // Hook MediaSource.isTypeSupported
-        if (windowCtx.MediaSource && windowCtx.MediaSource.isTypeSupported) {
-            const originalIsTypeSupported = windowCtx.MediaSource.isTypeSupported.bind(windowCtx.MediaSource);
+        if (_hookCodecsInstalled) return;
+        _hookCodecsInstalled = true;
 
-            windowCtx.MediaSource.isTypeSupported = function(mimeType) {
-                const original = originalIsTypeSupported(mimeType);
+        // Codec support is never faked: lying causes software decoding.
 
-                // Force support AV1
-                if (CONFIG.codecs.forceAV1 && mimeType.includes('av01')) {
-                    console.log('[Optimizer+] AV1 codec forcé:', mimeType);
-                    return true;
-                }
-
-                // Force support HEVC
-                if (CONFIG.codecs.forceHEVC && (mimeType.includes('hev1') || mimeType.includes('hvc1'))) {
-                    console.log('[Optimizer+] HEVC codec forcé:', mimeType);
-                    return true;
-                }
-
-                // Force support VP9
-                if (CONFIG.codecs.forceVP9 && mimeType.includes('vp9')) {
-                    return true;
-                }
-
-                return original;
-            };
-        }
-
-        // Hook HTMLMediaElement.canPlayType
-        if (windowCtx.HTMLMediaElement && windowCtx.HTMLMediaElement.prototype.canPlayType) {
-            const originalCanPlayType = windowCtx.HTMLMediaElement.prototype.canPlayType;
-
-            windowCtx.HTMLMediaElement.prototype.canPlayType = function(mimeType) {
-                const original = originalCanPlayType.call(this, mimeType);
-
-                if (CONFIG.codecs.forceAV1 && mimeType.includes('av01')) {
-                    return 'probably';
-                }
-
-                if (CONFIG.codecs.forceHEVC && (mimeType.includes('hev1') || mimeType.includes('hvc1'))) {
-                    return 'probably';
-                }
-
-                if (CONFIG.codecs.forceVP9 && mimeType.includes('vp9')) {
-                    return 'probably';
-                }
-
-                return original;
-            };
-        }
-
-        // Hook MediaCapabilities pour informer le navigateur des capacités
         if (windowCtx.MediaCapabilities && windowCtx.MediaCapabilities.prototype.decodingInfo) {
             const originalDecodingInfo = windowCtx.MediaCapabilities.prototype.decodingInfo;
 
-            windowCtx.MediaCapabilities.prototype.decodingInfo = function(config) {
+            windowCtx.MediaCapabilities.prototype.decodingInfo = function (config) {
                 return originalDecodingInfo.call(this, config).then(result => {
-                    // Améliorer les résultats pour les codecs haute qualité
                     if (config.video) {
-                        const codec = config.video.contentType || '';
+                        // HDR queries are answered "unsupported": see SDR STREAM
+                        const isHDRQuery = config.video.transferFunction === 'pq' ||
+                                           config.video.transferFunction === 'hlg' ||
+                                           config.video.colorGamut === 'p3' ||
+                                           config.video.colorGamut === 'rec2020';
 
-                        if (CONFIG.codecs.forceAV1 && codec.includes('av01')) {
-                            result.supported = true;
-                            result.smooth = true;
-                            result.powerEfficient = CONFIG.codecs.preferHardware;
-                        }
-
-                        if (CONFIG.codecs.forceHEVC && (codec.includes('hev1') || codec.includes('hvc1'))) {
-                            result.supported = true;
-                            result.smooth = true;
-                            result.powerEfficient = CONFIG.codecs.preferHardware;
+                        if (isHDRQuery) {
+                            result.supported = result.smooth = result.powerEfficient = false;
                         }
                     }
-
-                    // Toujours reporter comme fluide et efficace
-                    result.smooth = result.supported;
-                    result.powerEfficient = result.supported;
 
                     return result;
                 });
             };
         }
 
-        console.log('[Optimizer+] Hooks codecs installés (AV1, HEVC, VP9)');
+        console.log('[Optimizer+] Hooks codecs install\u00E9s (AV1, HEVC, VP9)');
     }
 
-    // ===============================================================================
-    // HOOK BITRATE - Amélioration du débit (FORÇAGE AGRESSIF)
-    // ===============================================================================
-
-    // Stockage global des PeerConnections pour forçage périodique du bitrate
+    // HOOK BITRATE
     const activePeerConnections = new Set();
-    let bitrateEnforcementInterval = null;
+    let streamMonitorInterval = null;
 
-    function hookBitrate() {
-        // ===========================================================================
-        // HOOK RTCRtpSender.setParameters - BLOQUER LES RÉDUCTIONS DE BITRATE
-        // ===========================================================================
+    // Calibration knob, tuned in a real session: localStorage.setItem('optimizer_playout_ms', '10') + reload
+    const PLAYOUT_MS = (() => {
+        try {
+            const v = parseFloat(localStorage.getItem('optimizer_playout_ms'));
+            if (v >= 0 && v <= 200) return v;
+        } catch (e) {}
+        return CONFIG.performance.playoutDelayHintMs;
+    })();
 
-        if (typeof RTCRtpSender !== 'undefined' && RTCRtpSender.prototype.setParameters) {
-            const originalSetParameters = RTCRtpSender.prototype.setParameters;
+    function optimizeReceiverLatency(receiver) {
+        if (!receiver || !CONFIG.performance.lowLatencyMode) return;
+        try {
+            const trackKind = receiver.track?.kind;
 
-            RTCRtpSender.prototype.setParameters = function(parameters) {
-                if (parameters && parameters.encodings) {
-                    parameters.encodings.forEach((encoding, index) => {
-                        // Forcer le bitrate minimum élevé
-                        if (encoding.maxBitrate !== undefined) {
-                            const originalBitrate = encoding.maxBitrate;
-                            const minAllowed = CONFIG.streaming.minBitrate;
+            // playoutDelayHint trade-off: 0 stutters on any jitter, unset lets Chrome grow the
+            // buffer (mouse lag). ~30 ms absorbs micro-jitter. Tune via
+            // CONFIG.performance.playoutDelayHintMs.
+            if ('playoutDelayHint' in receiver && trackKind === 'video') {
+                const hint = receiver.playoutDelayHint;
+                if (hint != null && Math.abs(hint - PLAYOUT_MS / 1000) > 1e-6) siteDelay = Math.round(hint * 1000) + 'ms';
+                receiver.playoutDelayHint = PLAYOUT_MS / 1000;
+            } else if ('playoutDelayHint' in receiver && trackKind === 'audio') {
+                // Audio: 10 ms keeps it in sync with the video
+                receiver.playoutDelayHint = 0.01;
+            }
 
-                            // Empêcher toute réduction en dessous du minimum configuré
-                            if (encoding.maxBitrate < minAllowed) {
-                                encoding.maxBitrate = CONFIG.streaming.targetBitrate;
-                                console.log(`[Optimizer+]  Bitrate forcé: ${originalBitrate} -> ${encoding.maxBitrate} (min: ${minAllowed})`);
-                            }
-                        } else {
-                            // Si pas de maxBitrate défini, le définir
-                            encoding.maxBitrate = CONFIG.streaming.targetBitrate;
-                        }
-
-                        // Forcer une bonne qualité de scaling
-                        if (encoding.scaleResolutionDownBy !== undefined && encoding.scaleResolutionDownBy > 1) {
-                            const originalScale = encoding.scaleResolutionDownBy;
-                            encoding.scaleResolutionDownBy = 1; // Pas de downscaling
-                            console.log(`[Optimizer+]  Scale forcé: ${originalScale} -> 1`);
-                        }
-
-                        // Forcer le framerate maximum
-                        if (CONFIG.streaming.preferredFramerate) {
-                            encoding.maxFramerate = CONFIG.streaming.preferredFramerate;
-                        }
-                    });
+            // Soft cap: bounds the buffer but lets the browser adapt below it
+            if (receiver.jitterBufferTarget !== undefined && trackKind === 'video') {
+                const cap = Math.max(60, CONFIG.performance.jitterBufferMax || 80);
+                if (typeof receiver.jitterBufferTarget === 'number' && receiver.jitterBufferTarget > cap) {
+                    receiver.jitterBufferTarget = cap;
                 }
+            }
+        } catch (e) {}
+    }
 
-                return originalSetParameters.call(this, parameters);
-            };
+    // Passive SDP munging: the script never dictates the bitrate (a floor above real
+    // bandwidth means packet loss). It only raises the advertised receive ceiling
+    // (b=AS/TIAS) so the server is never capped client-side.
+    function applyBitrateSdpMunging(sdp, isAnswer = false) {
+        const newline = sdp.includes('\r\n') ? '\r\n' : '\n';
+        const asKbps = Math.floor(CONFIG.streaming.maxBitrate / 1000);
 
-            console.log('[Optimizer+] [OK] Hook RTCRtpSender.setParameters installé');
+        // Boosteroid's SDP carries no b=AS/b=TIAS, so both are inserted when absent
+
+        // b=AS (kbps)
+        if (sdp.includes('b=AS:')) {
+            sdp = sdp.replace(/b=AS:\d+/g, `b=AS:${asKbps}`);
+        } else {
+            sdp = sdp.replace(
+                /(m=video[^\r\n]*(?:\r?\n))/g,
+                `$1b=AS:${asKbps}${newline}`
+            );
         }
 
-        // ===========================================================================
-        // HOOK RTCPeerConnection - Intercepter toutes les connexions
-        // ===========================================================================
+        if (DEBUG_LOGS && sdp.includes('b=AS:')) console.log(`[Optimizer+] [SDP] b=AS injecté/remplacé → ${asKbps} kbps (${isAnswer ? 'answer' : 'offer'})`);
+
+        // b=TIAS (bps)
+        if (sdp.includes('b=TIAS:')) {
+            sdp = sdp.replace(/b=TIAS:\d+/g, `b=TIAS:${CONFIG.streaming.maxBitrate}`);
+        } else {
+            sdp = sdp.replace(
+                /(m=video[^\r\n]*(?:\r?\n)(?:b=AS:[^\r\n]*(?:\r?\n))?)/g,
+                `$1b=TIAS:${CONFIG.streaming.maxBitrate}${newline}`
+            );
+        }
+
+        if (DEBUG_LOGS && sdp.includes('b=TIAS:')) console.log(`[Optimizer+] [SDP] b=TIAS présent → ${CONFIG.streaming.maxBitrate} bps (${isAnswer ? 'answer' : 'offer'})`);
+
+        if (DEBUG_LOGS) {
+            const vm = sdp.match(/m=video[^\r\n]*/);
+            if (vm) console.log(`[Optimizer+] [SDP] ligne vidéo résultante: ${vm[0].slice(0, 80)}`);
+        }
+
+        return sdp;
+    }
+
+    // SDP fixes based on Boosteroid's real negotiation:
+    //   1) the server strips the Opus stereo params
+    //   2) the answer has no fmtp for AV1
+    //   3) the client offer lists H264 before AV1
+    function enhanceSdpFromRealData(sdp, direction) {
+        const newline = sdp.includes('\r\n') ? '\r\n' : '\n';
+
+        // 1) Audio: restore stereo + high bitrate
+        sdp = sdp.replace(
+            /a=fmtp:111 ([^\r\n]*)/g,
+            (match, params) => {
+                let p = params;
+                if (!p.includes('stereo=')) p += ';stereo=1';
+                if (!p.includes('sprop-stereo=')) p += ';sprop-stereo=1';
+                if (!p.includes('maxaveragebitrate=')) p += ';maxaveragebitrate=510000';
+                if (!p.includes('maxplaybackrate=')) p += ';maxplaybackrate=48000';
+                return `a=fmtp:111 ${p}`;
+            }
+        );
+
+        // 2) AV1: inject fmtp when the answer lacks it (decoder defaults may cap resolution or framerate)
+        if (sdp.includes('a=rtpmap:45 AV1') && !sdp.includes('a=fmtp:45 ')) {
+            sdp = sdp.replace(
+                /(a=rtpmap:45 AV1\/90000)/g,
+                `$1${newline}a=fmtp:45 level-idx=13;profile=0;tier=0`
+            );
+        }
+
+        // 3) Offer: put AV1 first, only when the hardware really decodes it
+        if (direction === 'offer' && SmartCodecSelector.hardware?.['video/AV1']) {
+            sdp = sdp.replace(
+                /(m=video \d+ [A-Z/]+ )(\d[\d ]*)/g,
+                (match, prefix, payloads) => {
+                    const pts = payloads.trim().split(/\s+/);
+                    // AV1 (45) and its RTX (46) first
+                    const av1 = pts.filter(p => p === '45' || p === '46');
+                    const rest = pts.filter(p => p !== '45' && p !== '46');
+                    if (av1.length > 0) {
+                        return prefix + [...av1, ...rest].join(' ');
+                    }
+                    return match;
+                }
+            );
+        }
+
+        return sdp;
+    }
+
+    // Dev build diagnostics: open F12 and copy. Every 5 s for the first 30 s, then once a
+    // minute, plus whenever the stream changes or degrades.
+    const report = _realConsole.log.bind(_realConsole);
+    let siteDelay = null;
+
+    // Dev report only: highest requestAnimationFrame rate seen over one second = display refresh rate
+    let displayHz = 0;
+    function sampleDisplayHz() {
+        if (document.visibilityState !== 'visible') return;
+        let frames = 0;
+        const start = performance.now();
+        const tick = (now) => {
+            if (now - start < 1000) { frames++; requestAnimationFrame(tick); } else displayHz = Math.max(displayHz, frames);
+        };
+        requestAnimationFrame(tick);
+    }
+
+    function reportStreamStats(pc) {
+        pc.getStats().then((stats) => {
+            let rtt = '?', v = null;
+            stats.forEach((s) => {
+                if (s.type === 'candidate-pair' && s.state === 'succeeded' && typeof s.currentRoundTripTime === 'number') rtt = Math.round(s.currentRoundTripTime * 1000);
+                if (s.type === 'inbound-rtp' && s.kind === 'video') v = s;
+            });
+            if (!v) return;
+            const p = pc._optPrev;
+            pc._optPrev = v;
+            if (!p || v.timestamp <= p.timestamp) return;
+
+            const dt = (v.timestamp - p.timestamp) / 1000;
+            const d = (key) => (v[key] || 0) - (p[key] || 0);
+            const decoded = d('framesDecoded');
+            const n = pc._optReports = (pc._optReports || 0) + 1;
+            const changed = v.frameHeight !== p.frameHeight || Math.abs((v.framesPerSecond || 0) - (p.framesPerSecond || 0)) > 15;
+            const degraded = d('framesDropped') > decoded * 0.05 || d('freezeCount') > 0 || d('packetsLost') > 50;
+            // Decoding slower than the frame rate, three samples in a row: tell the user why it stutters
+            const decodeMs = decoded > 0 ? d('totalDecodeTime') / decoded * 1000 : 0;
+            pc._optSlowDecode = decodeMs > 1000 / Math.max(v.framesPerSecond || 60, 30) ? (pc._optSlowDecode || 0) + 1 : 0;
+            if (pc._optSlowDecode === 3) showNotification(t('decoderOverloadNotif'));
+
+            if (DEV_BUILD && n <= 3) sampleDisplayHz();
+
+            if (!DEV_BUILD || (n > 6 && n % 12 !== 0 && !changed && !degraded)) return;
+
+            if (n === 1) {
+                report(`[Optimizer+] v${SCRIPT_VERSION} | ${ENV_PROFILE.summary()} | screen ${_realScreen.width}x${_realScreen.height}@${+_realScreen.pixelRatio.toFixed(2)} | worker ${WORKER_RENDERER ? 'on' : 'off'} | upscale ${UPSCALE ? 'on' : 'off'} | playout ${PLAYOUT_MS}ms | ${SmartCodecSelector.describe()}`);
+            }
+            const codec = stats.get(v.codecId)?.mimeType?.replace('video/', '') || '?';
+            const hw = v.powerEfficientDecoder === undefined ? '' : (v.powerEfficientDecoder ? ' hw' : ' SOFTWARE');
+            const emitted = d('jitterBufferEmittedCount');
+
+            report(`[Optimizer+] [Stats] ${(d('bytesReceived') * 8 / dt / 1e6).toFixed(1)} Mbps` +
+                ` | recv ${Math.round(d('framesReceived') / dt)} decoded ${Math.round(decoded / dt)} fps` +
+                ` | ${v.frameWidth}x${v.frameHeight}` +
+                ` | ${codec} ${v.decoderImplementation || '?'}${hw}` +
+                ` | decode ${decoded > 0 ? decodeMs.toFixed(1) : '?'}ms` +
+                ` | dropped +${d('framesDropped')}` +
+                ` | lost +${d('packetsLost')} nack +${d('nackCount')}` +
+                ` | freezes +${d('freezeCount')}${v.qpSum !== undefined && decoded > 0 ? ` | qp ${Math.round(d('qpSum') / decoded)}` : ''}` +
+                ` | jitterBuf ${emitted > 0 ? Math.round(d('jitterBufferDelay') / emitted * 1000) : '?'}ms${siteDelay ? ` (site asked ${siteDelay})` : ''}` +
+                ` | rtt ${rtt}ms | display ${displayHz || '?'}Hz` +
+                ` | ${videoEnhancer.describe()}`);
+        }).catch(() => {});
+    }
+
+    const StreamMonitor = {
+        enabled: false,
+
+        enable() {
+            if (this.enabled) return;
+            this.enabled = true;
+            console.log('[Optimizer+] StreamMonitor enabled');
+            this.startLoop();
+        },
+
+        disable() {
+            if (!this.enabled) return;
+            this.enabled = false;
+            console.log('[Optimizer+] StreamMonitor disabled');
+            this.stopLoop();
+        },
+
+        startLoop() {
+            if (streamMonitorInterval) return;
+            streamMonitorInterval = setInterval(() => {
+                if (!this.enabled) return;
+                activePeerConnections.forEach(pc => {
+                    try {
+                        if (pc.connectionState === 'closed' || pc.connectionState === 'failed' || pc.signalingState === 'closed') {
+                            activePeerConnections.delete(pc);
+                            return;
+                        }
+                        if (pc.connectionState !== 'connected') return;
+
+                        // Periodic re-cap: covers receivers added via addEventListener('track') and mid-session resets
+                        pc.getReceivers().forEach(optimizeReceiverLatency);
+                        reportStreamStats(pc);
+                    } catch (e) {
+                    }
+                });
+            }, 5000);
+            console.log('[Optimizer+] [OK] Stream monitor loop started');
+        },
+
+        stopLoop() {
+            if (streamMonitorInterval) {
+                clearInterval(streamMonitorInterval);
+                streamMonitorInterval = null;
+            }
+        }
+    };
+
+    let _hookBitrateInstalled = false;
+    function hookBitrate() {
+        if (_hookBitrateInstalled) return;
+        _hookBitrateInstalled = true;
+
+        // HOOK RTCPeerConnection
 
         if (windowCtx.RTCPeerConnection) {
             const OriginalRTCPeerConnection = windowCtx.RTCPeerConnection;
 
-            windowCtx.RTCPeerConnection = function(config, constraints) {
-                // Optimiser la configuration ICE pour faible latence
+            const createWrappedPC = function (config, constraints) {
                 if (config) {
                     config.iceCandidatePoolSize = config.iceCandidatePoolSize || 10;
-                    // Forcer bundlePolicy pour réduire les connexions
                     config.bundlePolicy = 'max-bundle';
                     config.rtcpMuxPolicy = 'require';
                 }
 
                 const pc = new OriginalRTCPeerConnection(config, constraints);
 
-                // Ajouter à la liste pour forçage périodique
                 activePeerConnections.add(pc);
 
-                // Nettoyer quand la connexion se ferme
                 pc.addEventListener('connectionstatechange', () => {
                     if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
                         activePeerConnections.delete(pc);
                     }
                 });
 
-                // Intercepter setRemoteDescription pour modifier les SDP
                 const originalSetRemoteDescription = pc.setRemoteDescription.bind(pc);
-                pc.setRemoteDescription = function(description) {
+                pc.setRemoteDescription = function (description) {
                     if (description && description.sdp) {
-                        let modifiedSdp = description.sdp;
+                        let modifiedSdp = applyBitrateSdpMunging(description.sdp);
+                        modifiedSdp = enhanceSdpFromRealData(modifiedSdp, description.type);
+                        const newline = modifiedSdp.includes('\r\n') ? '\r\n' : '\n';
 
-                        // Augmenter le bitrate dans le SDP (AS = Application Specific)
+                        // NACK + PLI + transport-cc: retransmission recovers lost packets, so congestion
+                        // control does not cut the bitrate on a one-off loss
                         modifiedSdp = modifiedSdp.replace(
-                            /b=AS:\d+/g,
-                            `b=AS:${Math.floor(CONFIG.streaming.maxBitrate / 1000)}`
-                        );
-
-                        // Ajouter/modifier le bitrate TIAS (Transport Independent Application Specific)
-                        if (!modifiedSdp.includes('b=TIAS:')) {
-                            modifiedSdp = modifiedSdp.replace(
-                                /(m=video.*\r\n)/g,
-                                `$1b=TIAS:${CONFIG.streaming.maxBitrate}\r\n`
-                            );
-                        } else {
-                            modifiedSdp = modifiedSdp.replace(
-                                /b=TIAS:\d+/g,
-                                `b=TIAS:${CONFIG.streaming.maxBitrate}`
-                            );
-                        }
-
-                        // Forcer x-google-max-bitrate et x-google-min-bitrate
-                        modifiedSdp = modifiedSdp.replace(
-                            /a=fmtp:(\d+)(.*)/g,
-                            (match, pt, rest) => {
-                                // Retirer les anciens paramètres de bitrate
-                                let newRest = rest.replace(/;?x-google-(max|min|start)-bitrate=\d+/g, '');
-                                // Ajouter nos paramètres
-                                const bitrateParams = `;x-google-max-bitrate=${Math.floor(CONFIG.streaming.maxBitrate/1000)};x-google-min-bitrate=${Math.floor(CONFIG.streaming.minBitrate/1000)};x-google-start-bitrate=${Math.floor(CONFIG.streaming.targetBitrate/1000)}`;
-                                return `a=fmtp:${pt}${newRest}${bitrateParams}`;
+                            /(m=video[\s\S]*?)(?=m=|$)/g,
+                            (videoSection) => {
+                                const ptMatch = videoSection.match(/m=video \d+ [A-Z/]+ (\d+)/);
+                                if (ptMatch) {
+                                    const pt = ptMatch[1];
+                                    let additions = '';
+                                    if (!videoSection.includes(`a=rtcp-fb:${pt} nack${newline}`) && !videoSection.includes(`a=rtcp-fb:${pt} nack `)) {
+                                        additions += `a=rtcp-fb:${pt} nack${newline}`;
+                                    }
+                                    if (!videoSection.includes(`a=rtcp-fb:${pt} nack pli`)) {
+                                        additions += `a=rtcp-fb:${pt} nack pli${newline}`;
+                                    }
+                                    if (!videoSection.includes(`a=rtcp-fb:${pt} transport-cc`)) {
+                                        additions += `a=rtcp-fb:${pt} transport-cc${newline}`;
+                                    }
+                                    if (additions) {
+                                        videoSection = videoSection.replace(
+                                            /(m=video[^\r\n]*(?:\r?\n))/,
+                                            `$1${additions}`
+                                        );
+                                    }
+                                }
+                                return videoSection;
                             }
                         );
 
@@ -4054,366 +3165,249 @@
                             type: description.type,
                             sdp: modifiedSdp
                         });
-
-                        if (!CONFIG.performance.disableLogsInGame) {
-                            console.log('[Optimizer+] SDP modifié - Bitrate forcé:', Math.floor(CONFIG.streaming.maxBitrate/1000000), 'Mbps');
-                        }
                     }
                     return originalSetRemoteDescription(description);
                 };
 
-                // Intercepter setLocalDescription aussi pour être sûr
                 const originalSetLocalDescription = pc.setLocalDescription.bind(pc);
-                pc.setLocalDescription = function(description) {
+                pc.setLocalDescription = function (description) {
                     if (description && description.sdp) {
-                        let modifiedSdp = description.sdp;
-
-                        // Mêmes modifications que pour remote
-                        modifiedSdp = modifiedSdp.replace(
-                            /b=AS:\d+/g,
-                            `b=AS:${Math.floor(CONFIG.streaming.maxBitrate / 1000)}`
-                        );
-
-                        modifiedSdp = modifiedSdp.replace(
-                            /b=TIAS:\d+/g,
-                            `b=TIAS:${CONFIG.streaming.maxBitrate}`
-                        );
-
                         description = new RTCSessionDescription({
                             type: description.type,
-                            sdp: modifiedSdp
+                            sdp: enhanceSdpFromRealData(applyBitrateSdpMunging(description.sdp), description.type)
                         });
                     }
                     return originalSetLocalDescription(description);
                 };
 
-                // ================================================================
-                // OPTIMISATION LATENCE - Jitter Buffer & Playout Delay (CRITIQUE)
-                // ================================================================
+                // Boosteroid sends the answer over WebSocket using the value returned by createAnswer(),
+                // not pc.localDescription, so the returned value itself must be munged.
+                const originalCreateAnswer = pc.createAnswer.bind(pc);
+                pc.createAnswer = async function (...args) {
+                    const answer = await originalCreateAnswer(...args);
+                    if (answer && answer.sdp) {
+                        // New object: RTCSessionDescription attributes are read-only
+                        return { type: answer.type, sdp: enhanceSdpFromRealData(applyBitrateSdpMunging(answer.sdp, true), 'answer') };
+                    }
+                    return answer;
+                };
 
                 const originalAddTransceiver = pc.addTransceiver ? pc.addTransceiver.bind(pc) : null;
                 if (originalAddTransceiver) {
-                    pc.addTransceiver = function(trackOrKind, init) {
+                    pc.addTransceiver = function (trackOrKind, init) {
                         const transceiver = originalAddTransceiver(trackOrKind, init);
-
-                        // Optimiser le receiver pour faible latence
                         if (transceiver && transceiver.receiver) {
                             optimizeReceiverLatency(transceiver.receiver);
                         }
-
                         return transceiver;
                     };
                 }
 
-                // Intercepter ontrack pour optimiser les tracks vidéo entrantes
-                const originalOntrack = Object.getOwnPropertyDescriptor(RTCPeerConnection.prototype, 'ontrack');
+                const originalOntrack = Object.getOwnPropertyDescriptor(OriginalRTCPeerConnection.prototype, 'ontrack');
                 if (originalOntrack && originalOntrack.set) {
                     let userOntrack = null;
                     Object.defineProperty(pc, 'ontrack', {
                         get: () => userOntrack,
                         set: (handler) => {
-                            userOntrack = function(event) {
-                                // Optimiser la latence du receiver
+                            userOntrack = handler;
+                            const wrapped = function (event) {
                                 if (event.receiver) {
                                     optimizeReceiverLatency(event.receiver);
                                 }
                                 if (handler) handler.call(this, event);
                             };
+                            originalOntrack.set.call(pc, handler ? wrapped : null);
                         },
                         configurable: true
                     });
                 }
 
-                // Intercepter createOffer/Answer pour les paramètres d'encodage
-                const originalCreateOffer = pc.createOffer.bind(pc);
-                pc.createOffer = async function(options) {
-                    const offer = await originalCreateOffer(options);
-                    return offer;
+                // DataChannel bridge (debug only): logs Boosteroid's signalling in both directions.
+                // Never installed outside optimizer_debug=1: input packets travel on these channels,
+                // so any work here runs once per mouse event.
+                const hookDataChannel = (ch) => {
+                    try {
+                        if (!ch || ch._optHooked) return;
+                        ch._optHooked = true;
+                        const label = ch.label || 'remote';
+                        console.log(`[Optimizer+] [DC] bridge actif (${label}) — commandes serveur visibles avec localStorage optimizer_debug=1`);
+                        const parsePayload = (raw) => {
+                            let txt = raw;
+                            if (txt instanceof ArrayBuffer) txt = new TextDecoder().decode(txt);
+                            else if (ArrayBuffer.isView(txt)) return null; // binary payload
+                            else txt = String(txt);
+                            if (!txt || txt.length > 512) return null; // large blobs are not signalling
+                            let obj = null;
+                            const m = txt.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+                            if (m) { try { obj = JSON.parse(m[1]); } catch (e) { obj = null; } }
+                            return { txt, obj };
+                        };
+                        ch.addEventListener('message', (ev) => {
+                            const pkt = parsePayload(ev.data);
+                            if (!pkt) return;
+                            let summary = null;
+                            if (pkt.obj) {
+                                const o = pkt.obj;
+                                const fields = [];
+                                const grab = (key, unit) => { const v = o[key] ?? o[`${key}Value`]; if (v !== undefined && v !== null) fields.push(`${key}=${v}${unit || ''}`); };
+                                grab('bitrate', 'kbps'); grab('bitRate', 'kbps'); grab('fps', ''); grab('resolution');
+                                grab('width'); grab('height'); grab('quality'); grab('requestedQuality');
+                                grab('maxBitrate', 'kbps'); grab('targetBitrate', 'kbps');
+                                if (!fields.length) {
+                                    const keys = Object.keys(o).slice(0, 8).join(',');
+                                    fields.push(`keys={${keys}}`);
+                                }
+                                summary = fields.join(' ');
+                            } else if (pkt.txt.trim()) {
+                                summary = pkt.txt.trim().slice(0, 120);
+                            }
+                            if (summary && DEBUG_LOGS) console.log(`[Optimizer+] [DC] ${label} ⇐ ${summary}`);
+                        });
+                        const origSend = ch.send ? ch.send.bind(ch) : null;
+                        if (origSend) {
+                            ch.send = (data) => {
+                                try {
+                                    let txt = data;
+                                    if (txt instanceof ArrayBuffer) txt = new TextDecoder().decode(txt);
+                                    else if (ArrayBuffer.isView(txt)) txt = null;
+                                    else txt = String(txt || '');
+                                    if (txt && txt.length <= 512) {
+                                        const m = txt.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+                                        const o = m ? (() => { try { return JSON.parse(m[1]); } catch (e) { return null; } })() : null;
+                                        const keys = o ? Object.keys(o).slice(0, 8).join(',') : '';
+                                        if (DEBUG_LOGS && (keys || txt.trim())) console.log(`[Optimizer+] [DC] ${label} ⇒ (clt→srv) ${keys ? `{${keys}}` : txt.slice(0, 120)}`);
+                                        if (o) {
+                                            const req = {};
+                                            ['quality', 'requestedQuality', 'maxBitrate', 'targetBitrate', 'fps', 'resolution'].forEach(k => { if (o[k] !== undefined && o[k] !== null) req[k] = o[k]; });
+                                            if (Object.keys(req).length && DEBUG_LOGS) console.log(`[Optimizer+] [DC] ${label} ⇒ requete client ${JSON.stringify(req)}`);
+                                        }
+                                    }
+                                } catch (e) { /* never blocking */ }
+                                return origSend(data);
+                            };
+                        }
+                        const stateChange = () => {
+                            if (DEBUG_LOGS && ch.readyState && ch.readyState !== 'open') {
+                                console.log(`[Optimizer+] [DC] ${label} → ${ch.readyState}`);
+                            }
+                        };
+                        ch.addEventListener('open', () => {});
+                        ch.addEventListener('close', stateChange);
+                        ch.addEventListener('error', stateChange);
+                    } catch (e) { /* never blocking */ }
                 };
+                if (DEBUG_LOGS) pc.addEventListener('datachannel', (ev) => { if (ev.channel) hookDataChannel(ev.channel); });
+                const origCreateDC = pc.createDataChannel ? pc.createDataChannel.bind(pc) : null;
+                if (DEBUG_LOGS && origCreateDC) {
+                    pc.createDataChannel = (label, init) => {
+                        const ch = origCreateDC(label, init);
+                        if (ch) hookDataChannel(ch);
+                        return ch;
+                    };
+                }
 
                 return pc;
             };
 
-            // Copier les propriétés statiques
-            Object.keys(OriginalRTCPeerConnection).forEach(key => {
-                windowCtx.RTCPeerConnection[key] = OriginalRTCPeerConnection[key];
+            // Proxy keeps statics, prototype, instanceof and .constructor intact
+            windowCtx.RTCPeerConnection = new Proxy(OriginalRTCPeerConnection, {
+                construct(target, args) {
+                    return createWrappedPC(args[0], args[1]);
+                }
             });
-            windowCtx.RTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
-        }
 
-        // ===========================================================================
-        // FORÇAGE PÉRIODIQUE DU BITRATE - Empêcher Boosteroid de réduire le bitrate
-        // ===========================================================================
-
-        function startBitrateEnforcement() {
-            if (bitrateEnforcementInterval) return;
-
-            bitrateEnforcementInterval = setInterval(() => {
-                activePeerConnections.forEach(pc => {
-                    try {
-                        if (pc.connectionState !== 'connected') return;
-
-                        const senders = pc.getSenders();
-                        senders.forEach(sender => {
-                            if (!sender.track || sender.track.kind !== 'video') return;
-
-                            const params = sender.getParameters();
-                            if (!params.encodings || params.encodings.length === 0) return;
-
-                            let modified = false;
-                            params.encodings.forEach(encoding => {
-                                // Forcer le bitrate si trop bas
-                                if (encoding.maxBitrate === undefined || encoding.maxBitrate < CONFIG.streaming.minBitrate) {
-                                    encoding.maxBitrate = CONFIG.streaming.targetBitrate;
-                                    modified = true;
-                                }
-
-                                // Empêcher le downscaling
-                                if (encoding.scaleResolutionDownBy && encoding.scaleResolutionDownBy > 1) {
-                                    encoding.scaleResolutionDownBy = 1;
-                                    modified = true;
-                                }
-                            });
-
-                            if (modified) {
-                                sender.setParameters(params).then(() => {
-                                    console.log('[Optimizer+]  Bitrate ré-appliqué:', Math.floor(CONFIG.streaming.targetBitrate/1000000), 'Mbps');
-                                }).catch(e => {
-                                    // Ignorer les erreurs silencieusement
+            // WebSocket bridge (debug only): logs Boosteroid's control channel
+            {
+                if (DEBUG_LOGS && !windowCtx._optWsHooked) {
+                    windowCtx._optWsHooked = true;
+                    const OriginalWebSocket = windowCtx.WebSocket;
+                    if (OriginalWebSocket && typeof OriginalWebSocket === 'function') {
+                        const WsBridge = function (url, protocols) {
+                            const ws = protocols ? new OriginalWebSocket(url, protocols) : new OriginalWebSocket(url);
+                            try {
+                                ws.addEventListener('open', () => {
+                                    const u = String(url || '').replace(/^(wss?:\/\/)/, '').slice(0, 60);
+                                    if (!ws._optAnnounced) {
+                                        ws._optAnnounced = true;
+                                        console.log(`[Optimizer+] [WS] contrôle actif (${u}) — commandes serveur visibles avec localStorage optimizer_debug=1`);
+                                    }
                                 });
-                            }
-                        });
-                    } catch (e) {
-                        // Ignorer les erreurs
-                    }
-                });
-            }, 5000); // Vérifier toutes les 5 secondes
-
-            console.log('[Optimizer+] [OK] Bitrate enforcement actif (vérification toutes les 5s)');
-        }
-
-        function stopBitrateEnforcement() {
-            if (bitrateEnforcementInterval) {
-                clearInterval(bitrateEnforcementInterval);
-                bitrateEnforcementInterval = null;
-            }
-        }
-
-        // Démarrer automatiquement sur page streaming
-        if (isStreamingPage()) {
-            startBitrateEnforcement();
-        }
-
-        // Exposer les fonctions pour le contrôle externe
-        windowCtx._optimizerBitrate = {
-            start: startBitrateEnforcement,
-            stop: stopBitrateEnforcement,
-            getActivePCs: () => activePeerConnections.size,
-            forceNow: () => {
-                activePeerConnections.forEach(pc => {
-                    try {
-                        const senders = pc.getSenders();
-                        senders.forEach(sender => {
-                            if (!sender.track || sender.track.kind !== 'video') return;
-                            const params = sender.getParameters();
-                            if (params.encodings) {
-                                params.encodings.forEach(enc => {
-                                    enc.maxBitrate = CONFIG.streaming.maxBitrate;
+                                ws.addEventListener('message', (ev) => {
+                                    let txt = ev.data;
+                                    if (txt instanceof ArrayBuffer) txt = new TextDecoder().decode(txt);
+                                    else if (ArrayBuffer.isView(txt)) return;
+                                    else txt = String(txt || '');
+                                    if (!txt || txt.length > 512) return;
+                                    const m = txt.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+                                    if (!m) { if (DEBUG_LOGS) console.log(`[Optimizer+] [WS] ${txt.slice(0, 120)}`); return; }
+                                    try {
+                                        const o = JSON.parse(m[1]);
+                                        if (DEBUG_LOGS) {
+                                            const keys = Object.keys(o).slice(0, 10).join(',');
+                                            const vals = Object.keys(o).slice(0, 6).map(k => `${k}=${JSON.stringify(o[k]).slice(0, 30)}`).join(' ');
+                                            console.log(`[Optimizer+] [WS] ⇐ {${keys}} ${vals}`);
+                                        }
+                                    } catch (e) { /* not JSON */ }
                                 });
-                                sender.setParameters(params);
-                            }
-                        });
-                    } catch (e) {}
-                });
-                console.log('[Optimizer+] Bitrate maximum forcé immédiatement');
-            }
-        };
-
-        // Fonction d'optimisation de la latence des receivers
-        function optimizeReceiverLatency(receiver) {
-            if (!receiver || !CONFIG.performance.lowLatencyMode) return;
-
-            try {
-                // ===============================================================
-                // JITTER BUFFER OPTIMIZATION (CRITIQUE POUR LATENCE)
-                // ===============================================================
-
-                // Vérifier si on peut configurer le jitter buffer (Chrome 86+)
-                if (receiver.jitterBufferTarget !== undefined) {
-                    // Réduire le jitter buffer pour moins de latence
-                    // Attention: trop bas = saccades, trop haut = latence
-                    receiver.jitterBufferTarget = CONFIG.performance.jitterBufferTarget;
-
-                    if (!CONFIG.performance.disableLogsInGame) {
-                        console.log('[Optimizer+] Jitter buffer réduit à', CONFIG.performance.jitterBufferTarget, 'ms');
+                                // Proves the munged answer really leaves the client
+                                const origWsSend = ws.send.bind(ws);
+                                ws.send = (data) => {
+                                    try {
+                                        let txt = data;
+                                        if (txt instanceof ArrayBuffer) txt = new TextDecoder().decode(txt);
+                                        else if (ArrayBuffer.isView(txt)) txt = null;
+                                        else txt = String(txt || '');
+                                        if (txt && txt.length <= 512) {
+                                            if (DEBUG_LOGS && /sdp|message|answer|offer|convertt|video|quality/i.test(txt)) {
+                                                console.log(`[Optimizer+] [WS] ⇒ (envoyé) ${txt.slice(0, 200)}`);
+                                            }
+                                            if (/b=AS|b=TIAS|x-google-min/i.test(txt)) {
+                                                console.log('[Optimizer+] [WS] ⇒ *** ANSWER MUNGÉE DÉTECTÉE DANS L\'ENVOI (b=AS retenu) — munging quitte le client ✓ ***');
+                                            }
+                                        }
+                                    } catch (e) { /* never blocking */ }
+                                    return origWsSend(data);
+                                };
+                            } catch (e) { /* never blocking */ }
+                            return ws;
+                        };
+                        WsBridge.prototype = OriginalWebSocket.prototype;
+                        ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(k => { if (k in OriginalWebSocket) WsBridge[k] = OriginalWebSocket[k]; });
+                        windowCtx.WebSocket = WsBridge;
+                        console.log('[Optimizer+] Hook WebSocket installé');
                     }
                 }
-
-                // Playout delay hint (WebRTC 1.0+)
-                if (receiver.playoutDelayHint !== undefined) {
-                    receiver.playoutDelayHint = CONFIG.performance.targetLatency / 1000; // En secondes
-
-                    if (!CONFIG.performance.disableLogsInGame) {
-                        console.log('[Optimizer+] Playout delay hint:', CONFIG.performance.targetLatency, 'ms');
-                    }
-                }
-
-            } catch(e) {
-                console.warn('[Optimizer+] Impossible d\'optimiser la latence receiver:', e);
             }
+            console.log('[Optimizer+] Hook RTCPeerConnection installé');
         }
 
-        // Hook pour les requêtes réseau (XMLHttpRequest) - Intercepter les changements de qualité
-        const originalXHROpen = windowCtx.XMLHttpRequest.prototype.open;
-        const originalXHRSend = windowCtx.XMLHttpRequest.prototype.send;
-
-        windowCtx.XMLHttpRequest.prototype.open = function(method, url, ...args) {
-            this._optimizerUrl = url;
-            this._optimizerMethod = method;
-            return originalXHROpen.call(this, method, url, ...args);
-        };
-
-        windowCtx.XMLHttpRequest.prototype.send = function(body) {
-            // Intercepter les requêtes qui tentent de réduire la qualité
-            if (this._optimizerUrl && typeof this._optimizerUrl === 'string') {
-                const url = this._optimizerUrl.toLowerCase();
-
-                if ((url.includes('quality') || url.includes('bitrate') || url.includes('bandwidth')) &&
-                    this._optimizerMethod === 'POST' && body) {
-                    try {
-                        let data = typeof body === 'string' ? JSON.parse(body) : body;
-
-                        // Forcer les valeurs élevées si c'est une requête de qualité
-                        if (data.bitrate !== undefined || data.quality !== undefined || data.bandwidth !== undefined) {
-                            console.log('[Optimizer+] [BLOCK] Requête de réduction de qualité bloquée:', data);
-
-                            // Remplacer par nos valeurs
-                            if (data.bitrate !== undefined) data.bitrate = CONFIG.streaming.targetBitrate;
-                            if (data.maxBitrate !== undefined) data.maxBitrate = CONFIG.streaming.maxBitrate;
-                            if (data.bandwidth !== undefined) data.bandwidth = CONFIG.streaming.maxBitrate;
-                            if (data.quality !== undefined) data.quality = 'ultra';
-
-                            body = JSON.stringify(data);
-                        }
-                    } catch (e) {
-                        // Pas du JSON, ignorer
-                    }
-                }
-            }
-            return originalXHRSend.call(this, body);
-        };
-
-        // Hook Fetch API - Intercepter les changements de qualité
-        const originalFetch = windowCtx.fetch;
-        windowCtx.fetch = function(url, options) {
-            // Intercepter les requêtes de qualité
-            if (typeof url === 'string' && options && options.method === 'POST' && options.body) {
-                const urlLower = url.toLowerCase();
-
-                if (urlLower.includes('quality') || urlLower.includes('bitrate') || urlLower.includes('bandwidth')) {
-                    try {
-                        let data = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-
-                        if (data.bitrate !== undefined || data.quality !== undefined) {
-                            console.log('[Optimizer+] [BLOCK] Fetch de réduction de qualité intercepté:', data);
-
-                            if (data.bitrate !== undefined) data.bitrate = CONFIG.streaming.targetBitrate;
-                            if (data.maxBitrate !== undefined) data.maxBitrate = CONFIG.streaming.maxBitrate;
-                            if (data.quality !== undefined) data.quality = 'ultra';
-
-                            options.body = JSON.stringify(data);
-                        }
-                    } catch (e) {
-                        // Pas du JSON, ignorer
-                    }
-                }
-            }
-
-            return originalFetch.call(this, url, options);
-        };
-
-        console.log('[Optimizer+] Hooks bitrate + latence installés');
     }
 
-    // ===============================================================================
-    // HOOK PERFORMANCE - Optimisations GPU et rendu
-    // ===============================================================================
+    // HOOK PERFORMANCE
 
     function hookPerformance() {
-        // Demander la priorité réseau haute (si supporté)
-        if ('connection' in navigator) {
-            try {
-                // Surveiller la qualité de connexion et adapter
-                const connection = navigator.connection;
-                if (connection) {
-                    connection.addEventListener('change', () => {
-                        const effectiveType = connection.effectiveType;
-                        if (!CONFIG.performance.disableLogsInGame) {
-                            console.log('[Optimizer+] Connexion changée:', effectiveType);
-                        }
-
-                        // Adapter automatiquement la qualité selon la connexion
-                        if (effectiveType === '4g' || effectiveType === 'wifi') {
-                            // Connexion rapide: activer tous les filtres
-                            CONFIG.performance.maxFiltersActive = 3;
-                        } else if (effectiveType === '3g') {
-                            // Connexion moyenne: réduire les filtres
-                            CONFIG.performance.maxFiltersActive = 1;
-                        } else {
-                            // Connexion lente: désactiver les filtres pour la fluidité
-                            CONFIG.performance.maxFiltersActive = 0;
-                        }
-                    });
+        // AudioContext latency
+        const OriginalAudioContext = windowCtx.AudioContext || windowCtx.webkitAudioContext;
+        if (OriginalAudioContext) {
+            const WrappedAudioContext = new Proxy(OriginalAudioContext, {
+                construct(target, args) {
+                    let opt = args[0] || {};
+                    if (typeof opt === 'object') {
+                        opt.latencyHint = 'interactive';
+                    }
+                    return new target(opt);
                 }
-            } catch(e) {}
+            });
+            windowCtx.AudioContext = WrappedAudioContext;
+            if (windowCtx.webkitAudioContext) windowCtx.webkitAudioContext = WrappedAudioContext;
+            console.log('[Optimizer+] AudioContext latency optimization active (latencyHint: interactive)');
         }
 
-        // Optimiser requestAnimationFrame pour le monitoring (si utilisé)
-        let frameCount = 0;
-        let lastFpsUpdate = performance.now();
-        let currentFps = 60;
-
-        // Exposer les stats FPS globalement pour debug
-        windowCtx.optimizerStats = {
-            get fps() { return currentFps; },
-            get latency() { return CONFIG.performance.targetLatency; }
-        };
-
-        // Monitoring FPS léger (seulement si panel visible)
-        function updateFpsCounter() {
-            frameCount++;
-            const now = performance.now();
-
-            if (now - lastFpsUpdate >= 1000) {
-                currentFps = frameCount;
-                frameCount = 0;
-                lastFpsUpdate = now;
-
-                // Mettre à jour l'affichage si présent
-                const fpsDisplay = document.getElementById('optimizer-fps-display');
-                if (fpsDisplay) {
-                    fpsDisplay.textContent = currentFps + ' FPS';
-                    fpsDisplay.style.color = currentFps >= 55 ? '#22c55e' :
-                                             currentFps >= 30 ? '#f59e0b' : '#ef4444';
-                }
-            }
-
-            requestAnimationFrame(updateFpsCounter);
-        }
-
-        // Démarrer le compteur FPS après un délai
-        setTimeout(() => {
-            requestAnimationFrame(updateFpsCounter);
-        }, 2000);
-
-        console.log('[Optimizer+] Hooks performance installés');
+        console.log('[Optimizer+] Hooks performance install\u00E9s');
     }
 
-    // ===============================================================================
-    // VIDEO ENHANCER - Filtres de netteté et amélioration AVANCÉS
-    // ===============================================================================
+    // VIDEO ENHANCER - Filter presets
 
-    // Présets de filtres prédéfinis (style Better xCloud)
     const FILTER_PRESETS = {
         'default': {
             nameKey: 'presetDefault',
@@ -4446,17 +3440,14 @@
             }
         },
         'game': {
-            // PRESET COMPÉTITIF - Optimisé pour FPS (High-End ONLY)
-            // v3.6.2 Slim: Valeurs divisées par 2 pour stabilité 60fps
             nameKey: 'presetGame',
             get name() { return t(this.nameKey); },
-            minProfile: 'high-end',
             enhancer: { sharpness: 0.45, contrast: 1.06, saturation: 1.01, brightness: 1.02 },
             filters: {
                 usm: { enabled: true, amount: 0.35, radius: 0.5, threshold: 0.03 },
                 cas: { enabled: true, sharpness: 0.45 },
-                clarity: { enabled: false, amount: 0 }, // v3.6.2: Désactivé (trop lourd)
-                denoise: { enabled: false, strength: 0.12 }, // v3.6.2: Désactivé par défaut
+                clarity: { enabled: false, amount: 0 },
+                denoise: { enabled: false, strength: 0.12 },
                 vibrance: { enabled: true, amount: 0.15 },
                 gamma: { enabled: true, value: 1.03 },
                 exposure: { enabled: false, value: 0 },
@@ -4464,7 +3455,7 @@
             }
         },
         'comfort': {
-            // PRESET CONFORT - Anti-fatigue oculaire pour longues sessions
+            // Comfort preset: reduces eye strain in long sessions
             nameKey: 'presetComfort',
             get name() { return t(this.nameKey); },
             enhancer: { sharpness: 0.25, contrast: 0.98, saturation: 0.95, brightness: 1.02 },
@@ -4479,31 +3470,23 @@
                 deband: { enabled: true, strength: 0.3 }
             }
         },
-        // ===========================================================================
-        // v3.5 PERFECT QUALITY PRESET - Zero visual artifacts, maximum clarity
-        // ===========================================================================
+        // Perfect quality preset: no visible artifacts
         'perfect': {
             nameKey: 'presetPerfect',
             get name() { return t(this.nameKey); },
-            description: 'Zero artifacts, maximum visual clarity (v3.5)',
-            enhancer: { sharpness: 0.35, contrast: 1.02, saturation: 1.0, brightness: 1.0 },
+            enhancer: { sharpness: 0.45, contrast: 1.02, saturation: 1.0, brightness: 1.0 },
             filters: {
-                usm: { enabled: true, amount: 0.3, radius: 1.1, threshold: 0.05 },  // Léger + stable
-                cas: { enabled: true, sharpness: 0.4 },    // Réduit pour zéro halo
-                clarity: { enabled: false, amount: 0 },    // Désactivé: trop d'artefacts
-                denoise: { enabled: false, strength: 0 },  // Désactivé: peut causer blocage
-                vibrance: { enabled: false, amount: 0 },   // Désactivé
-                gamma: { enabled: false, value: 1.0 },     // Neutre
-                exposure: { enabled: false, value: 0 },    // Neutre
-                deband: { enabled: true, strength: 0.15 }  // Très léger deband
+                usm: { enabled: true, amount: 0.3, radius: 1.1, threshold: 0.05 },
+                cas: { enabled: true, sharpness: 0.4 },
+                clarity: { enabled: false, amount: 0 },
+                denoise: { enabled: false, strength: 0 },
+                vibrance: { enabled: false, amount: 0 },
+                gamma: { enabled: false, value: 1.0 },
+                exposure: { enabled: false, value: 0 },
+                deband: { enabled: true, strength: 0.15 }
             },
-            performance: {
-                maxFiltersActive: 3,  // Limiter strictement
-                adaptiveQuality: true,
-                lowLatencyMode: true
-            }
         },
-        // v3.6.2: PerfectPro supprimé (redondant avec Perfect)
+
         'custom': {
             nameKey: 'presetCustom',
             get name() { return t(this.nameKey); },
@@ -4512,573 +3495,1936 @@
         }
     };
 
+    // WebGPU SHADER ENGINE — Zero-Copy Pipeline
+    // GPU pipeline via importExternalTexture() (Chrome/Edge 113+), WebGL2 fallback elsewhere
+
+    const WGSL_SHADER = `
+struct Uniforms {
+    resolution: vec2f,
+    contrast: f32,
+    saturation: f32,
+    brightness: f32,
+    gamma: f32,
+    exposure: f32,
+    vibrance: f32,
+    sharpness: f32,
+    denoise: f32,
+    clarity: f32,
+    deband: f32,
+    enhancerEnabled: f32,
+    filtersEnabled: f32,
+    upscale: f32,
+    time: f32,
+    qualityMode: f32,
+    performanceMode: f32,
+    _p0: f32,
+    _p1: f32,
+    _p2: f32,
+};
+
+@group(0) @binding(0) var videoSampler: sampler;
+@group(0) @binding(1) var videoTexture: texture_external;
+@group(0) @binding(2) var<uniform> u: Uniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) texCoord: vec2f,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    var pos = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+        vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+    );
+    var uv = array<vec2f, 6>(
+        vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+        vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0),
+    );
+    var out: VertexOutput;
+    out.position = vec4f(pos[vi], 0.0, 1.0);
+    out.texCoord = uv[vi];
+    return out;
+}
+
+fn adjustContrast(color: vec3f, c: f32) -> vec3f {
+    return mix(vec3f(0.5), color, c);
+}
+
+fn adjustVibrance(color: vec3f, v: f32) -> vec3f {
+    let lum = dot(color, vec3f(0.2126, 0.7152, 0.0722));
+    let maxC = max(color.r, max(color.g, color.b));
+    let minC = min(color.r, min(color.g, color.b));
+    let sat = maxC - minC;
+    let boost = v * (1.0 - sat) * 0.35;
+    return mix(vec3f(lum), color, 1.0 + boost);
+}
+
+// Exposure, brightness and saturation run in linear light; contrast and gamma stay perceptual.
+fn toLinear(c: vec3f) -> vec3f { return pow(max(c, vec3f(0.0)), vec3f(2.2)); }
+fn toGamma(c: vec3f) -> vec3f { return pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2)); }
+
+// CAS (AMD FidelityFX). 5 taps; 9 taps when qualityMode = 1.
+fn sharpen(uv: vec2f, res: vec2f, amount: f32) -> vec3f {
+    let px = vec2f(1.0) / res;
+    let b = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, -px.y)).rgb;
+    let d = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-px.x, 0.0)).rgb;
+    let e = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv).rgb;
+    let f = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(px.x, 0.0)).rgb;
+    let h = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, px.y)).rgb;
+
+    var mnRGB = min(min(min(d, e), min(f, b)), h);
+    var mxRGB = max(max(max(d, e), max(f, b)), h);
+
+    if (u.qualityMode > 0.5) {
+        let a = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-px.x, -px.y)).rgb;
+        let c = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(px.x, -px.y)).rgb;
+        let g = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-px.x, px.y)).rgb;
+        let i = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(px.x, px.y)).rgb;
+        mnRGB = min(mnRGB, min(min(a, c), min(g, i)));
+        mxRGB = max(mxRGB, max(max(a, c), max(g, i)));
+    }
+
+    let peak = 5.6;
+    let rcpMx = vec3f(1.0) / (mxRGB + vec3f(0.0001));
+    let ampRGB = clamp(min(mnRGB, vec3f(2.0) - mxRGB) * rcpMx, vec3f(0.0), vec3f(1.0));
+    let w = vec3f(-1.0) / (inverseSqrt(ampRGB + vec3f(0.000001)) * peak + vec3f(0.0001));
+    let rcpW = vec3f(1.0) / (4.0 * w + vec3f(1.0));
+    let window = b + d + f + h;
+    return clamp((window * w + e) * rcpW, vec3f(0.0), vec3f(1.0));
+}
+
+fn fastDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
+    let px = vec2f(1.0) / res;
+    let center = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv).rgb;
+    
+    let left = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-1.0, 0.0) * px).rgb;
+    let right = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(1.0, 0.0) * px).rgb;
+    let top = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, -1.0) * px).rgb;
+    let bottom = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, 1.0) * px).rgb;
+    
+    let denoised = (center * 0.4 + left * 0.15 + right * 0.15 + top * 0.15 + bottom * 0.15);
+    return mix(center, denoised, strength * 0.8);
+}
+
+fn bilateralDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
+    let px = vec2f(1.0) / res;
+    let center = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv).rgb;
+    
+    var sum = center;
+    var wSum = 1.0;
+    
+    let lCenter = dot(center, vec3f(0.299, 0.587, 0.114));
+    let sigmaColor = 0.04 + strength * 0.04;
+    
+    let offsets = array<vec2f, 8>(
+        vec2f(-2.0, 0.0), vec2f(2.0, 0.0),
+        vec2f(0.0, -2.0), vec2f(0.0, 2.0),
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0),
+        vec2f(-1.0, 1.0), vec2f(1.0, 1.0)
+    );
+    
+    for (var i = 0; i < 8; i++) {
+        let s = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + offsets[i] * px).rgb;
+        let lS = dot(s, vec3f(0.299, 0.587, 0.114));
+        let lumDist = abs(lS - lCenter);
+        let colorDist = length(s - center);
+        let w = exp(-colorDist * colorDist / (2.0 * sigmaColor * sigmaColor)) * 
+                  exp(-lumDist * lumDist / 0.02);
+        sum += s * w;
+        wSum += w;
+    }
+    
+    let denoised = sum / wSum;
+    return mix(center, denoised, strength);
+}
+
+fn clarityPass(uv: vec2f, res: vec2f, amount: f32, centerColor: vec3f) -> vec3f {
+    let px = vec2f(1.0) / res;
+    var blur = centerColor;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-2.0, -2.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(2.0, -2.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-2.0, 2.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(2.0, 2.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, -2.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, 2.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-2.0, 0.0) * px).rgb;
+    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(2.0, 0.0) * px).rgb;
+    blur /= 9.0;
+
+    let highpass = centerColor - blur;
+    let result = centerColor + highpass * (amount * 2.5);
+    return clamp(result, vec3f(0.0), vec3f(1.0));
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4f {
+    var color = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord).rgb;
+    // Stream larger than the canvas: four taps cover the footprint a single one would skip
+    if (u.upscale < -0.5) {
+        let o = vec2f(0.25) / u.resolution;
+        color = (textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(-o.x, -o.y)).rgb
+            + textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(o.x, -o.y)).rgb
+            + textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(-o.x, o.y)).rgb
+            + textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(o.x, o.y)).rgb) * 0.25;
+    }
+
+    if (u.enhancerEnabled < 0.5 && u.filtersEnabled < 0.5) {
+        return vec4f(color, 1.0);
+    }
+
+    if (u.filtersEnabled > 0.5) {
+        if (u.denoise > 0.01) {
+            if (u.performanceMode > 0.5) {
+                color = fastDenoise(input.texCoord, u.resolution, u.denoise);
+            } else {
+                color = bilateralDenoise(input.texCoord, u.resolution, u.denoise);
+            }
+        }
+        if (u.clarity > 0.01 && u.performanceMode < 0.5) {
+            color = clarityPass(input.texCoord, u.resolution, u.clarity, color);
+        }
+    }
+    // Sharpen: always applied additively (CAS on current pixel vs neighbors)
+    if ((u.filtersEnabled > 0.5 || u.enhancerEnabled > 0.5) && u.sharpness > 0.01 && u.upscale < 0.5) {
+        let sharp = sharpen(input.texCoord, u.resolution, u.sharpness);
+        color = mix(color, sharp, u.sharpness);
+    }
+
+    if (u.enhancerEnabled > 0.5) {
+        if (abs(u.exposure) > 0.001 || abs(u.brightness - 1.0) > 0.001 || abs(u.saturation - 1.0) > 0.001) {
+            var lin = toLinear(color);
+            if (abs(u.exposure) > 0.001) {
+                lin = lin * pow(2.0, u.exposure * 0.5);
+            }
+            if (abs(u.brightness - 1.0) > 0.001) {
+                lin = lin * u.brightness;
+            }
+            if (abs(u.saturation - 1.0) > 0.001) {
+                let lLum = dot(lin, vec3f(0.2126, 0.7152, 0.0722));
+                lin = mix(vec3f(lLum), lin, u.saturation);
+            }
+            color = toGamma(max(lin, vec3f(0.0)));
+        }
+        if (abs(u.gamma - 1.0) > 0.001) {
+            color = pow(max(color, vec3f(0.0)), vec3f(1.0 / u.gamma));
+        }
+        if (abs(u.contrast - 1.0) > 0.001) {
+            color = adjustContrast(color, u.contrast);
+        }
+    }
+
+    // --- Vibrance (selective saturation) ---
+    if (u.filtersEnabled > 0.5 && abs(u.vibrance) > 0.01) {
+        color = adjustVibrance(color, u.vibrance);
+    }
+
+    // Deband: smooth flat areas only (the banding), plus a stable ~1 LSB dither.
+    if (u.filtersEnabled > 0.5 && u.deband > 0.01) {
+        let dpx = vec2f(1.0) / u.resolution;
+        let n1 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(2.0 * dpx.x, 0.0)).rgb;
+        let n2 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(-2.0 * dpx.x, 0.0)).rgb;
+        let n3 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(0.0, 2.0 * dpx.y)).rgb;
+        let n4 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(0.0, -2.0 * dpx.y)).rgb;
+        let avg = (n1 + n2 + n3 + n4) * 0.25;
+        let dd = abs(color - avg);
+        let md = max(dd.r, max(dd.g, dd.b));
+        let flat = 1.0 - smoothstep(0.0, 0.025, md);
+        color = mix(color, avg, flat * u.deband);
+        let dither = fract(sin(dot(input.texCoord * u.resolution, vec2f(12.9898, 78.233))) * 43758.5453) - 0.5;
+        color += vec3f(dither * u.deband * 0.012);
+    }
+
+    return vec4f(clamp(color, vec3f(0.0), vec3f(1.0)), 1.0);
+}
+`;
+
+    // WebGL2 FALLBACK — GLSL ES 3.0 shaders (Firefox, Safari, Chrome < 113)
+
+    const VERTEX_SHADER = `#version 300 es
+    in vec2 a_position;
+    in vec2 a_texCoord;
+    out vec2 v_texCoord;
+    void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord;
+    }`;
+
+    const FRAGMENT_SHADER = `#version 300 es
+    precision highp float;
+    in vec2 v_texCoord;
+    out vec4 fragColor;
+
+    uniform sampler2D u_video;
+    uniform vec2 u_resolution;
+
+    uniform float u_contrast;
+    uniform float u_saturation;
+    uniform float u_brightness;
+    uniform float u_gamma;
+    uniform float u_exposure;
+    uniform float u_vibrance;
+    uniform float u_sharpness;
+    uniform float u_denoise;
+    uniform float u_clarity;
+    uniform float u_deband;
+
+    uniform float u_enhancerEnabled;
+    uniform float u_filtersEnabled;
+    uniform float u_qualityMode;
+    uniform float u_performanceMode;
+
+    vec3 adjustContrast(vec3 color, float c) {
+        return mix(vec3(0.5), color, c);
+    }
+
+    vec3 toLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+    vec3 toGamma(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)); }
+
+    vec3 adjustVibrance(vec3 color, float v) {
+        float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        float maxC = max(color.r, max(color.g, color.b));
+        float minC = min(color.r, min(color.g, color.b));
+        float sat = maxC - minC;
+        float boost = v * (1.0 - sat) * 0.35;
+        return mix(vec3(lum), color, 1.0 + boost);
+    }
+
+    vec3 sharpen(sampler2D tex, vec2 uv, vec2 res, float amount) {
+        vec2 px = vec2(1.0) / res;
+        vec3 b = texture(tex, uv + vec2(0.0, -px.y)).rgb;
+        vec3 d = texture(tex, uv + vec2(-px.x, 0.0)).rgb;
+        vec3 e = texture(tex, uv).rgb;
+        vec3 f = texture(tex, uv + vec2(px.x, 0.0)).rgb;
+        vec3 h = texture(tex, uv + vec2(0.0, px.y)).rgb;
+
+        vec3 mnRGB = min(min(min(d, e), min(f, b)), h);
+        vec3 mxRGB = max(max(max(d, e), max(f, b)), h);
+
+        if (u_qualityMode > 0.5) {
+            vec3 a = texture(tex, uv + vec2(-px.x, -px.y)).rgb;
+            vec3 c = texture(tex, uv + vec2(px.x, -px.y)).rgb;
+            vec3 g = texture(tex, uv + vec2(-px.x, px.y)).rgb;
+            vec3 i = texture(tex, uv + vec2(px.x, px.y)).rgb;
+            mnRGB = min(mnRGB, min(min(a, c), min(g, i)));
+            mxRGB = max(mxRGB, max(max(a, c), max(g, i)));
+        }
+
+        float peak = 5.6;
+        vec3 rcpMx = vec3(1.0) / (mxRGB + vec3(0.0001));
+        vec3 ampRGB = clamp(min(mnRGB, vec3(1.0) * 2.0 - mxRGB) * rcpMx, 0.0, 1.0);
+        vec3 w = vec3(-1.0) / (inversesqrt(ampRGB + vec3(0.000001)) * peak + vec3(0.0001));
+        vec3 rcpW = vec3(1.0) / (4.0 * w + vec3(1.0));
+        vec3 window = b + d + f + h;
+        return clamp((window * w + e) * rcpW, 0.0, 1.0);
+    }
+
+    vec3 fastDenoise(sampler2D tex, vec2 uv, vec2 res, float strength) {
+        vec2 px = vec2(1.0) / res;
+        vec3 center = texture(tex, uv).rgb;
+        
+        vec3 left = texture(tex, uv + vec2(-1.0, 0.0) * px).rgb;
+        vec3 right = texture(tex, uv + vec2(1.0, 0.0) * px).rgb;
+        vec3 top = texture(tex, uv + vec2(0.0, -1.0) * px).rgb;
+        vec3 bottom = texture(tex, uv + vec2(0.0, 1.0) * px).rgb;
+        
+        vec3 denoised = (center * 0.4 + left * 0.15 + right * 0.15 + top * 0.15 + bottom * 0.15);
+        return mix(center, denoised, strength * 0.8);
+    }
+    
+    vec3 bilateralDenoise(sampler2D tex, vec2 uv, vec2 res, float strength) {
+        vec2 px = vec2(1.0) / res;
+        vec3 center = texture(tex, uv).rgb;
+        
+        vec3 sum = center;
+        float wSum = 1.0;
+        
+        float lCenter = dot(center, vec3(0.299, 0.587, 0.114));
+        float sigmaColor = 0.04 + strength * 0.04;
+        
+        vec2 offsets[8];
+        offsets[0] = vec2(-2.0, 0.0);
+        offsets[1] = vec2(2.0, 0.0);
+        offsets[2] = vec2(0.0, -2.0);
+        offsets[3] = vec2(0.0, 2.0);
+        offsets[4] = vec2(-1.0, -1.0);
+        offsets[5] = vec2(1.0, -1.0);
+        offsets[6] = vec2(-1.0, 1.0);
+        offsets[7] = vec2(1.0, 1.0);
+        
+        for (int i = 0; i < 8; i++) {
+            vec3 s = texture(tex, uv + offsets[i] * px).rgb;
+            float lS = dot(s, vec3(0.299, 0.587, 0.114));
+            float lumDist = abs(lS - lCenter);
+            float colorDist = length(s - center);
+            float w = exp(-colorDist * colorDist / (2.0 * sigmaColor * sigmaColor)) * 
+                      exp(-lumDist * lumDist / 0.02);
+            sum += s * w;
+            wSum += w;
+        }
+        vec3 denoised = sum / wSum;
+        return mix(center, denoised, strength);
+    }
+
+    vec3 clarityPass(sampler2D tex, vec2 uv, vec2 res, float amount, vec3 centerColor) {
+        vec2 px = vec2(1.0) / res;
+        vec3 blur = centerColor;
+        blur += texture(tex, uv + vec2(-2.0, -2.0) * px).rgb;
+        blur += texture(tex, uv + vec2(2.0, -2.0) * px).rgb;
+        blur += texture(tex, uv + vec2(-2.0, 2.0) * px).rgb;
+        blur += texture(tex, uv + vec2(2.0, 2.0) * px).rgb;
+        blur += texture(tex, uv + vec2(0.0, -2.0) * px).rgb;
+        blur += texture(tex, uv + vec2(0.0, 2.0) * px).rgb;
+        blur += texture(tex, uv + vec2(-2.0, 0.0) * px).rgb;
+        blur += texture(tex, uv + vec2(2.0, 0.0) * px).rgb;
+        blur /= 9.0;
+
+        vec3 highpass = centerColor - blur;
+        vec3 result = centerColor + highpass * (amount * 2.5);
+        return clamp(result, 0.0, 1.0);
+    }
+
+    void main() {
+        vec3 color = texture(u_video, v_texCoord).rgb;
+
+        if (u_enhancerEnabled < 0.5 && u_filtersEnabled < 0.5) {
+            fragColor = vec4(color, 1.0);
+            return;
+        }
+
+        // Performance mode: fast denoise, skip clarity
+        if (u_filtersEnabled > 0.5) {
+            if (u_denoise > 0.01) {
+                if (u_performanceMode > 0.5) {
+                    color = fastDenoise(u_video, v_texCoord, u_resolution, u_denoise);
+                } else {
+                    color = bilateralDenoise(u_video, v_texCoord, u_resolution, u_denoise);
+                }
+            }
+            if (u_clarity > 0.01 && u_performanceMode < 0.5) {
+                color = clarityPass(u_video, v_texCoord, u_resolution, u_clarity, color);
+            }
+        }
+        // Sharpen: always applied additively (CAS on current pixel vs neighbors)
+        if ((u_filtersEnabled > 0.5 || u_enhancerEnabled > 0.5) && u_sharpness > 0.01) {
+            vec3 sharp = sharpen(u_video, v_texCoord, u_resolution, u_sharpness);
+            color = mix(color, sharp, u_sharpness);
+        }
+
+        if (u_enhancerEnabled > 0.5) {
+            if (abs(u_exposure) > 0.001 || abs(u_brightness - 1.0) > 0.001 || abs(u_saturation - 1.0) > 0.001) {
+                vec3 lin = toLinear(color);
+                if (abs(u_exposure) > 0.001) {
+                    lin *= pow(2.0, u_exposure * 0.5);
+                }
+                if (abs(u_brightness - 1.0) > 0.001) {
+                    lin *= u_brightness;
+                }
+                if (abs(u_saturation - 1.0) > 0.001) {
+                    float lLum = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+                    lin = mix(vec3(lLum), lin, u_saturation);
+                }
+                color = toGamma(max(lin, vec3(0.0)));
+            }
+            if (abs(u_gamma - 1.0) > 0.001) {
+                color = pow(max(color, vec3(0.0)), vec3(1.0 / u_gamma));
+            }
+            if (abs(u_contrast - 1.0) > 0.001) {
+                color = adjustContrast(color, u_contrast);
+            }
+        }
+
+        // --- Vibrance (selective saturation) ---
+        if (u_filtersEnabled > 0.5 && abs(u_vibrance) > 0.01) {
+            color = adjustVibrance(color, u_vibrance);
+        }
+
+        if (u_filtersEnabled > 0.5 && u_deband > 0.01) {
+            vec2 dpx = vec2(1.0) / u_resolution;
+            vec3 n1 = texture(u_video, v_texCoord + vec2(2.0 * dpx.x, 0.0)).rgb;
+            vec3 n2 = texture(u_video, v_texCoord + vec2(-2.0 * dpx.x, 0.0)).rgb;
+            vec3 n3 = texture(u_video, v_texCoord + vec2(0.0, 2.0 * dpx.y)).rgb;
+            vec3 n4 = texture(u_video, v_texCoord + vec2(0.0, -2.0 * dpx.y)).rgb;
+            vec3 avg = (n1 + n2 + n3 + n4) * 0.25;
+            vec3 dd = abs(color - avg);
+            float md = max(dd.r, max(dd.g, dd.b));
+            float flatness = 1.0 - smoothstep(0.0, 0.025, md);
+            color = mix(color, avg, flatness * u_deband);
+            float dither = fract(sin(dot(v_texCoord * u_resolution, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+            color += vec3(dither * u_deband * 0.012);
+        }
+
+        fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+    }`;
+
+    // WebGLVideoRenderer — WebGL2 fallback (same API as WebGPUVideoRenderer)
+    class WebGLVideoRenderer {
+        constructor() {
+            this.canvas = null;
+            this.gl = null;
+            this.program = null;
+            this.texture = null;
+            this.videoElement = null;
+            this.animationId = null;
+            this.uniforms = {};
+            this.isActive = false;
+            this._attached = false;
+            this._lastConfig = null;
+            this._lastVideoTime = 0;
+            this._useRVFC = typeof HTMLVideoElement !== 'undefined' &&
+                            'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+        }
+
+        init(videoElement) {
+            if (!videoElement || this._attached) return false;
+            this.videoElement = videoElement;
+
+            this.canvas = document.createElement('canvas');
+            this.canvas.id = 'optimizer-webgl-canvas';
+            this.canvas.style.cssText = `
+                position: absolute; top: 0; left: 0;
+                width: 100%; height: 100%;
+                pointer-events: none;
+                object-fit: contain;
+                will-change: transform;
+                contain: strict;
+            `;
+
+            const parent = videoElement.parentElement;
+            if (parent) {
+                parent.style.position = parent.style.position || 'relative';
+                parent.insertBefore(this.canvas, videoElement.nextSibling);
+            }
+
+            this.gl = this.canvas.getContext('webgl2', {
+                alpha: false,
+                antialias: false,
+                premultipliedAlpha: false,
+                preserveDrawingBuffer: false,
+                powerPreference: 'high-performance',
+                // Bypasses the compositor queue where supported
+                desynchronized: true
+            });
+
+            if (!this.gl) {
+                console.warn('[Optimizer+] WebGL2 unavailable');
+                return false;
+            }
+
+            this.canvas.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault();
+                console.warn('[Optimizer+] WebGL context lost');
+                this.stopRenderLoop();
+                if (this.videoElement) this.videoElement.style.opacity = '1';
+                if (this.canvas) this.canvas.style.display = 'none';
+            }, false);
+
+            this.canvas.addEventListener('webglcontextrestored', () => {
+                console.log('[Optimizer+] WebGL context restored');
+                if (this._initShaders()) {
+                    this._initGeometry();
+                    this._initTexture();
+                    if (this._lastConfig) this.updateUniforms(this._lastConfig);
+                    this.startRenderLoop();
+                }
+            }, false);
+
+            if (!this._initShaders()) {
+                console.error('[Optimizer+] WebGL2 shader initialization failed');
+                this.destroy();
+                return false;
+            }
+            this._initGeometry();
+            this._initTexture();
+            this._attached = true;
+
+            console.log('[Optimizer+] WebGL2 fallback pipeline initialized');
+            return true;
+        }
+
+        _initShaders() {
+            const gl = this.gl;
+            const vs = this._compile(gl.VERTEX_SHADER, VERTEX_SHADER);
+            const fs = this._compile(gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+            if (!vs || !fs) return false;
+
+            this.program = gl.createProgram();
+            gl.attachShader(this.program, vs);
+            gl.attachShader(this.program, fs);
+            gl.linkProgram(this.program);
+
+            if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+                console.error('[Optimizer+] Shader link error:', gl.getProgramInfoLog(this.program));
+                return false;
+            }
+
+            gl.useProgram(this.program);
+
+            const names = [
+                'u_video', 'u_resolution',
+                'u_contrast', 'u_saturation', 'u_brightness',
+                'u_gamma', 'u_exposure', 'u_vibrance',
+                'u_sharpness', 'u_denoise', 'u_clarity', 'u_deband',
+                'u_enhancerEnabled', 'u_filtersEnabled', 'u_qualityMode', 'u_performanceMode'
+            ];
+            for (const n of names) {
+                this.uniforms[n] = gl.getUniformLocation(this.program, n);
+            }
+            return true;
+        }
+
+        _compile(type, source) {
+            const gl = this.gl;
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('[Optimizer+] Shader compile error:', gl.getShaderInfoLog(shader));
+                return null;
+            }
+            return shader;
+        }
+
+        _initGeometry() {
+            const gl = this.gl;
+            const verts = new Float32Array([
+                -1, -1,  0, 1,
+                 1, -1,  1, 1,
+                -1,  1,  0, 0,
+                 1,  1,  1, 0,
+            ]);
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+            const aPos = gl.getAttribLocation(this.program, 'a_position');
+            const aTex = gl.getAttribLocation(this.program, 'a_texCoord');
+            gl.enableVertexAttribArray(aPos);
+            gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
+            gl.enableVertexAttribArray(aTex);
+            gl.vertexAttribPointer(aTex, 2, gl.FLOAT, false, 16, 8);
+        }
+
+        _initTexture() {
+            const gl = this.gl;
+            this.texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+
+            // Avoid the browser's own colour conversion on upload
+            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        }
+
+        updateUniforms(config) {
+            this._lastConfig = config;
+            const gl = this.gl;
+            if (!gl || !this.program || gl.isContextLost()) return;
+
+            gl.useProgram(this.program);
+
+            const e = config.enhancer;
+            const f = config.filters;
+
+            const wasActive = this.isActive;
+            this.isActive = e.enabled || f.enabled;
+            if (this.canvas) {
+                const targetDisplay = this.isActive ? 'block' : 'none';
+                if (this.canvas.style.display !== targetDisplay) {
+                    this.canvas.style.display = targetDisplay;
+                }
+            }
+            if (!this.isActive && this.videoElement) {
+                this.videoElement.style.opacity = '1';
+            }
+            if (this.isActive && !wasActive && !this.animationId) {
+                this.startRenderLoop();
+            }
+
+            gl.uniform1f(this.uniforms.u_enhancerEnabled, e.enabled ? 1.0 : 0.0);
+            gl.uniform1f(this.uniforms.u_filtersEnabled, f.enabled ? 1.0 : 0.0);
+            gl.uniform1f(this.uniforms.u_contrast, e.contrast || 1.0);
+            gl.uniform1f(this.uniforms.u_saturation, e.saturation || 1.0);
+            gl.uniform1f(this.uniforms.u_brightness, e.brightness || 1.0);
+            // Sharpness: combine enhancer base slider + CAS/USM advanced filters
+            const casUsm = f.enabled ? ((f.cas?.enabled ? f.cas.sharpness : 0) + (f.usm?.enabled ? f.usm.amount : 0)) : 0;
+            const baseSharp = e.enabled ? (e.sharpness || 0) : 0;
+            // Clamp to [0,1]: used as a mix() factor, >1 overshoots into halos
+            gl.uniform1f(this.uniforms.u_sharpness, Math.min(1.0, casUsm + baseSharp));
+            gl.uniform1f(this.uniforms.u_gamma, f.gamma?.enabled ? f.gamma.value : 1.0);
+            gl.uniform1f(this.uniforms.u_exposure, f.exposure?.enabled ? f.exposure.value : 0.0);
+            gl.uniform1f(this.uniforms.u_vibrance, f.vibrance?.enabled ? f.vibrance.amount : 0.0);
+            gl.uniform1f(this.uniforms.u_denoise, f.denoise?.enabled ? f.denoise.strength : 0.0);
+            gl.uniform1f(this.uniforms.u_clarity, f.clarity?.enabled ? f.clarity.amount : 0.0);
+            gl.uniform1f(this.uniforms.u_deband, f.deband?.enabled ? (f.deband.strength || 0.3) : 0.0);
+            gl.uniform1f(this.uniforms.u_qualityMode, ENV_PROFILE.isHighEnd ? 1.0 : 0.0);
+            gl.uniform1f(this.uniforms.u_performanceMode, f.performanceMode ? 1.0 : 0.0);
+        }
+
+        render() {
+            if (!this.isActive) return;
+            const gl = this.gl;
+            const video = this.videoElement;
+            if (!gl || !video || video.readyState < 2 || gl.isContextLost()) return;
+
+            if (!this._useRVFC) {
+                if (video.currentTime === this._lastVideoTime) return;
+                this._lastVideoTime = video.currentTime;
+            }
+
+            const texW = video.videoWidth || 1920;
+            const texH = video.videoHeight || 1080;
+            if (!texW || !texH) return;
+
+            if (this.canvas.width !== texW || this.canvas.height !== texH) {
+                this.canvas.width = texW;
+                this.canvas.height = texH;
+                gl.viewport(0, 0, texW, texH);
+                gl.useProgram(this.program);
+                gl.uniform2f(this.uniforms.u_resolution, texW, texH);
+            }
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+            gl.uniform1i(this.uniforms.u_video, 0);
+
+            if (video.style.opacity !== '0.01') {
+                video.style.opacity = '0.01';
+            }
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+
+        startRenderLoop() {
+            if (this.animationId) return;
+
+            const loop = () => {
+                this.render();
+                if (!this.isActive) {
+                    this.animationId = null;
+                    return;
+                }
+                if (this._useRVFC && this.videoElement) {
+                    this.animationId = this.videoElement.requestVideoFrameCallback(loop);
+                } else {
+                    this.animationId = requestAnimationFrame(loop);
+                }
+            };
+
+            if (this._useRVFC && this.videoElement) {
+                this.animationId = this.videoElement.requestVideoFrameCallback(loop);
+            } else {
+                this.animationId = requestAnimationFrame(loop);
+            }
+
+            console.log('[Optimizer+] WebGL2 render loop started' +
+                (this._useRVFC ? ' (rVFC sync)' : ' (rAF fallback)'));
+        }
+
+        stopRenderLoop() {
+            if (this.animationId) {
+                if (this._useRVFC && this.videoElement) {
+                    this.videoElement.cancelVideoFrameCallback(this.animationId);
+                } else {
+                    cancelAnimationFrame(this.animationId);
+                }
+                this.animationId = null;
+            }
+        }
+
+        destroy() {
+            this.stopRenderLoop();
+            if (this.videoElement) {
+                this.videoElement.style.opacity = '1';
+            }
+            if (this.canvas && this.canvas.parentElement) {
+                this.canvas.parentElement.removeChild(this.canvas);
+            }
+            if (this.gl) {
+                if (this.program) {
+                    this.gl.deleteProgram(this.program);
+                    this.program = null;
+                }
+                if (this.texture) {
+                    this.gl.deleteTexture(this.texture);
+                    this.texture = null;
+                }
+                this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+            }
+            this._attached = false;
+            this.gl = null;
+            this.canvas = null;
+            this.videoElement = null;
+        }
+    }
+
+    // Upscale: AMD FSR 1 (MIT). EASU resamples along edges, RCAS sharpens at display
+    // resolution with its noise limiter (keeps compression artifacts from being amplified).
+    const WGSL_UPSCALE = `
+struct Uniforms {
+    resolution: vec2f,
+    pad0: vec2f,
+    pad1: vec4f,
+    sharpness: f32,
+};
+
+@group(0) @binding(0) var frame: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> u: Uniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) texCoord: vec2f,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    var pos = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+        vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+    );
+    var uv = array<vec2f, 6>(
+        vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+        vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0),
+    );
+    var out: VertexOutput;
+    out.position = vec4f(pos[vi], 0.0, 1.0);
+    out.texCoord = uv[vi];
+    return out;
+}
+
+fn px(p: vec2i) -> vec3f {
+    return textureLoad(frame, clamp(p, vec2i(0), vec2i(textureDimensions(frame)) - 1), 0).rgb;
+}
+
+fn luma(c: vec3f) -> f32 {
+    return c.r * 0.5 + c.g + c.b * 0.5;
+}
+
+fn easuSet(w: f32, lA: f32, lB: f32, lC: f32, lD: f32, lE: f32) -> vec3f {
+    let dirX = lD - lB;
+    let lenX = saturate(abs(dirX) / max(max(abs(lD - lC), abs(lC - lB)), 0.00001));
+    let dirY = lE - lA;
+    let lenY = saturate(abs(dirY) / max(max(abs(lE - lC), abs(lC - lA)), 0.00001));
+    return vec3f(dirX, dirY, lenX * lenX + lenY * lenY) * w;
+}
+
+fn easuTap(off: vec2f, dir: vec2f, len: vec2f, lob: f32, clp: f32, c: vec3f) -> vec4f {
+    let v = vec2f(off.x * dir.x + off.y * dir.y, off.y * dir.x - off.x * dir.y) * len;
+    let d2 = min(dot(v, v), clp);
+    let wB = 0.4 * d2 - 1.0;
+    let wA = lob * d2 - 1.0;
+    let w = (1.5625 * wB * wB - 0.5625) * wA * wA;
+    return vec4f(c * w, w);
+}
+
+//    b c
+//  e f g h
+//  i j k l
+//    n o
+@fragment
+fn fs_easu(input: VertexOutput) -> @location(0) vec4f {
+    let p = input.texCoord * vec2f(textureDimensions(frame)) - 0.5;
+    let fp = floor(p);
+    let pp = p - fp;
+    let ip = vec2i(fp);
+
+    let b = px(ip + vec2i(0, -1));
+    let c = px(ip + vec2i(1, -1));
+    let e = px(ip + vec2i(-1, 0));
+    let f = px(ip);
+    let g = px(ip + vec2i(1, 0));
+    let h = px(ip + vec2i(2, 0));
+    let i = px(ip + vec2i(-1, 1));
+    let j = px(ip + vec2i(0, 1));
+    let k = px(ip + vec2i(1, 1));
+    let l = px(ip + vec2i(2, 1));
+    let n = px(ip + vec2i(0, 2));
+    let o = px(ip + vec2i(1, 2));
+
+    let bL = luma(b); let cL = luma(c); let eL = luma(e); let fL = luma(f);
+    let gL = luma(g); let hL = luma(h); let iL = luma(i); let jL = luma(j);
+    let kL = luma(k); let lL = luma(l); let nL = luma(n); let oL = luma(o);
+
+    var acc = easuSet((1.0 - pp.x) * (1.0 - pp.y), bL, eL, fL, gL, jL);
+    acc += easuSet(pp.x * (1.0 - pp.y), cL, fL, gL, hL, kL);
+    acc += easuSet((1.0 - pp.x) * pp.y, fL, iL, jL, kL, nL);
+    acc += easuSet(pp.x * pp.y, gL, jL, kL, lL, oL);
+
+    let dirR = dot(acc.xy, acc.xy);
+    let dir = select(acc.xy * inverseSqrt(dirR), vec2f(1.0, 0.0), dirR < 1.0 / 32768.0);
+    let len = acc.z * acc.z * 0.25;
+    let stretch = dot(dir, dir) / max(abs(dir.x), abs(dir.y));
+    let len2 = vec2f(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+    let lob = 0.5 - 0.29 * len;
+    let clp = 1.0 / lob;
+
+    var a = easuTap(vec2f(0.0, -1.0) - pp, dir, len2, lob, clp, b);
+    a += easuTap(vec2f(1.0, -1.0) - pp, dir, len2, lob, clp, c);
+    a += easuTap(vec2f(-1.0, 1.0) - pp, dir, len2, lob, clp, i);
+    a += easuTap(vec2f(0.0, 1.0) - pp, dir, len2, lob, clp, j);
+    a += easuTap(-pp, dir, len2, lob, clp, f);
+    a += easuTap(vec2f(-1.0, 0.0) - pp, dir, len2, lob, clp, e);
+    a += easuTap(vec2f(1.0, 1.0) - pp, dir, len2, lob, clp, k);
+    a += easuTap(vec2f(2.0, 1.0) - pp, dir, len2, lob, clp, l);
+    a += easuTap(vec2f(2.0, 0.0) - pp, dir, len2, lob, clp, h);
+    a += easuTap(vec2f(1.0, 0.0) - pp, dir, len2, lob, clp, g);
+    a += easuTap(vec2f(1.0, 2.0) - pp, dir, len2, lob, clp, o);
+    a += easuTap(vec2f(0.0, 2.0) - pp, dir, len2, lob, clp, n);
+
+    let lo = min(min(f, g), min(j, k));
+    let hi = max(max(f, g), max(j, k));
+    return vec4f(clamp(a.rgb / a.a, lo, hi), 1.0);
+}
+
+@fragment
+fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
+    let ip = vec2i(input.position.xy);
+    let e = px(ip);
+    let b = px(ip + vec2i(0, -1));
+    let d = px(ip + vec2i(-1, 0));
+    let f = px(ip + vec2i(1, 0));
+    let h = px(ip + vec2i(0, 1));
+
+    let mn = min(min(b, d), min(f, h));
+    let mx = max(max(b, d), max(f, h));
+    let hitMin = min(mn, e) / (4.0 * mx + 0.00001);
+    let hitMax = (1.0 - max(mx, e)) / (4.0 * mn - 4.00001);
+    let lobeRGB = max(-hitMin, hitMax);
+    // Slider 0.45 (default) lands on FSR's own default strength (~0.87)
+    var lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * min(u.sharpness * 2.0, 1.0);
+
+    let bL = luma(b); let dL = luma(d); let eL = luma(e); let fL = luma(f); let hL = luma(h);
+    let range = max(max(max(bL, dL), max(eL, fL)), hL) - min(min(min(bL, dL), min(eL, fL)), hL);
+    lobe *= 1.0 - 0.5 * saturate(abs(0.25 * (bL + dL + fL + hL) - eL) / max(range, 0.00001));
+
+    return vec4f(clamp((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), vec3f(0.0), vec3f(1.0)), 1.0);
+}
+`;
+
+    // Off for low-end devices. Kill switch: localStorage.setItem('optimizer_upscale', '0') + reload.
+    const UPSCALE = !ENV_PROFILE.isLowEnd && (() => {
+        try { return localStorage.getItem('optimizer_upscale') !== '0'; } catch (e) { return true; }
+    })();
+
+    // Reports the canvas box in device pixels (0x0 while hidden).
+    function observeDeviceBox(canvas, onBox) {
+        if (typeof ResizeObserver !== 'function') return null;
+        const observer = new ResizeObserver(([entry]) => {
+            const dp = entry.devicePixelContentBoxSize?.[0];
+            if (dp) onBox(dp.inlineSize, dp.blockSize);
+            else onBox(Math.round(entry.contentRect.width * _realScreen.pixelRatio), Math.round(entry.contentRect.height * _realScreen.pixelRatio));
+        });
+        try { observer.observe(canvas, { box: 'device-pixel-content-box' }); } catch (e) { observer.observe(canvas); }
+        return observer;
+    }
+
+    // Shared WebGPU helpers. gpuCreatePipeline, gpuDrawFrame, gpuTargetSize and
+    // workerRendererMain are serialised with toString into the render worker: they
+    // must not reference anything from the outer scope.
+    function gpuCreatePipeline(device, code, format, upscaleCode) {
+        const module = device.createShaderModule({ code });
+        const upscaleModule = device.createShaderModule({ code: upscaleCode });
+        const layout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+            ],
+        });
+        const filterLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+        const pipeline = (mod, entryPoint, target, pipelineLayout) => device.createRenderPipeline({
+            layout: pipelineLayout,
+            vertex: { module: mod, entryPoint: 'vs_main' },
+            fragment: { module: mod, entryPoint, targets: [{ format: target }] },
+            primitive: { topology: 'triangle-list' },
+        });
+        const timed = device.features.has('timestamp-query');
+        return {
+            querySet: timed ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null,
+            resolveBuffer: timed ? device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }) : null,
+            readBuffer: timed ? device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }) : null,
+            layout,
+            sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
+            pipeline: pipeline(module, 'fs_main', format, filterLayout),
+            midPipeline: pipeline(module, 'fs_main', 'rgb10a2unorm', filterLayout),
+            easuPipeline: pipeline(upscaleModule, 'fs_easu', 'rgb10a2unorm', 'auto'),
+            rcasPipeline: pipeline(upscaleModule, 'fs_rcas', format, 'auto'),
+            uniformBuffer: device.createBuffer({ size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+            dirty: true,
+            mid: null, midView: null, easuGroup: null,
+            up: null, upView: null, rcasGroup: null,
+            last: 0, interval: 16.7, tick: 0, slow: 0, gpuMs: 0, upscaleOff: false,
+        };
+    }
+
+    // Canvas buffer size = on-screen size in device pixels, so the shader does the scaling
+    // (both ways) instead of the compositor. fill: stretch mode, each axis scales on its own.
+    function gpuTargetSize(srcW, srcH, boxW, boxH, allowUp, fill) {
+        if (!boxW || !boxH) return [srcW, srcH];
+        let sx = Math.min(boxW / srcW, 4096 / srcW), sy = Math.min(boxH / srcH, 4096 / srcH);
+        if (!fill) sx = sy = Math.min(sx, sy);
+        const up = Math.max(sx, sy) > 1.02;
+        if (up ? !allowUp : Math.min(sx, sy) > 0.98) return [srcW, srcH];
+        return [Math.round(srcW * sx), Math.round(srcH * sy)];
+    }
+
+    // source: HTMLVideoElement or VideoFrame (srcW x srcH). One pass when the canvas is the
+    // source size or smaller; filter -> EASU -> RCAS when it is larger. Owns uniform slots
+    // 0, 1 (the resolution the filter pass works at) and 14.
+    function gpuDrawFrame(device, context, g, source, srcW, srcH, uniforms) {
+        const target = context.getCurrentTexture();
+        const upscale = target.width > srcW || target.height > srcH;
+        const resW = upscale ? srcW : target.width, resH = upscale ? srcH : target.height;
+        // Slot 14: 1 = upscaling (RCAS sharpens), -1 = minifying (box taps), 0 = 1:1
+        const mode = upscale ? 1 : (target.width < srcW * 0.75 ? -1 : 0);
+        if (g.dirty || uniforms[0] !== resW || uniforms[1] !== resH || uniforms[14] !== mode) {
+            uniforms[0] = resW;
+            uniforms[1] = resH;
+            uniforms[14] = mode;
+            device.queue.writeBuffer(g.uniformBuffer, 0, uniforms);
+            g.dirty = false;
+        }
+        // An external texture expires after use: this bind group is rebuilt every frame
+        const bindGroup = device.createBindGroup({
+            layout: g.layout,
+            entries: [
+                { binding: 0, resource: g.sampler },
+                { binding: 1, resource: device.importExternalTexture({ source }) },
+                { binding: 2, resource: { buffer: g.uniformBuffer } },
+            ],
+        });
+        const sized = (texture, w, h) => {
+            if (texture && texture.width === w && texture.height === h) return texture;
+            if (texture) texture.destroy();
+            return device.createTexture({
+                size: [w, h],
+                format: 'rgb10a2unorm',
+                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+            });
+        };
+        if (upscale) {
+            const mid = sized(g.mid, srcW, srcH);
+            if (mid !== g.mid) {
+                g.mid = mid;
+                g.midView = mid.createView();
+                g.easuGroup = device.createBindGroup({
+                    layout: g.easuPipeline.getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: g.midView }],
+                });
+            }
+            const up = sized(g.up, target.width, target.height);
+            if (up !== g.up) {
+                g.up = up;
+                g.upView = up.createView();
+                g.rcasGroup = device.createBindGroup({
+                    layout: g.rcasPipeline.getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: g.upView }, { binding: 1, resource: { buffer: g.uniformBuffer } }],
+                });
+            }
+        }
+        // Every 30th upscaled frame is timed on the GPU itself
+        const timed = upscale && g.querySet && ++g.tick % 30 === 0 && g.readBuffer.mapState === 'unmapped';
+        const encoder = device.createCommandEncoder();
+        const run = (view, pipeline, group, timestampWrites) => {
+            const pass = encoder.beginRenderPass({
+                colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+                timestampWrites,
+            });
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, group);
+            pass.draw(6);
+            pass.end();
+        };
+        if (upscale) {
+            run(g.midView, g.midPipeline, bindGroup, timed ? { querySet: g.querySet, beginningOfPassWriteIndex: 0 } : undefined);
+            run(g.upView, g.easuPipeline, g.easuGroup);
+            run(target.createView(), g.rcasPipeline, g.rcasGroup, timed ? { querySet: g.querySet, endOfPassWriteIndex: 1 } : undefined);
+        } else {
+            run(target.createView(), g.pipeline, bindGroup);
+        }
+        if (timed) {
+            encoder.resolveQuerySet(g.querySet, 0, 2, g.resolveBuffer, 0);
+            encoder.copyBufferToBuffer(g.resolveBuffer, 0, g.readBuffer, 0, 16);
+        }
+        device.queue.submit([encoder.finish()]);
+
+        const now = performance.now();
+        if (g.last) g.interval += (Math.min(now - g.last, 50) - g.interval) * 0.1;
+        g.last = now;
+        // Guard: the three passes eating over half the frame interval, ten samples in a row,
+        // stops upscaling for the session. One-way.
+        if (timed) {
+            g.readBuffer.mapAsync(GPUMapMode.READ).then(() => {
+                const t = new BigInt64Array(g.readBuffer.getMappedRange());
+                const ms = Number(t[1] - t[0]) / 1e6;
+                g.readBuffer.unmap();
+                if (ms < 0 || ms > 1000) return;
+                g.gpuMs = ms;
+                g.slow = ms > g.interval * 0.5 ? g.slow + 1 : 0;
+                if (g.slow >= 10) g.upscaleOff = true;
+            }).catch(() => {});
+        }
+    }
+
+    // Fills the settings slots of the uniform block.
+    function packUniforms(config, data) {
+        const e = config.enhancer;
+        const f = config.filters;
+        data[2] = e.contrast || 1.0;
+        data[3] = e.saturation || 1.0;
+        data[4] = e.brightness || 1.0;
+        data[5] = f.gamma?.enabled ? f.gamma.value : 1.0;
+        data[6] = f.exposure?.enabled ? f.exposure.value : 0.0;
+        data[7] = f.vibrance?.enabled ? f.vibrance.amount : 0.0;
+        // Sharpness: combine enhancer base slider + CAS/USM advanced filters additively
+        const casUsm = f.enabled ? ((f.cas?.enabled ? f.cas.sharpness : 0) + (f.usm?.enabled ? f.usm.amount : 0)) : 0;
+        const baseSharp = e.enabled ? (e.sharpness || 0) : 0;
+        // Clamp to [0,1]: used as a mix() factor, >1 overshoots into halos
+        data[8] = Math.min(1.0, casUsm + baseSharp);
+        data[9] = f.denoise?.enabled ? f.denoise.strength : 0.0;
+        data[10] = f.clarity?.enabled ? f.clarity.amount : 0.0;
+        data[11] = f.deband?.enabled ? (f.deband.strength || 0.3) : 0.0;
+        data[12] = e.enabled ? 1.0 : 0.0;
+        data[13] = f.enabled ? 1.0 : 0.0;
+        data[15] = 0.0; // time (unused by the shader)
+        data[16] = ENV_PROFILE.isHighEnd ? 1.0 : 0.0;  // qualityMode
+        data[17] = f.performanceMode ? 1.0 : 0.0;  // performanceMode
+    }
+
+    // Worker renderer — WebGPU off the main thread.
+    // Frames go decoder -> MediaStreamTrackProcessor -> worker -> OffscreenCanvas, so
+    // frame pacing no longer depends on the page's main thread (which is busy with
+    // input events during mouse play). Chrome/Edge only; anything else, or any
+    // failure, falls back to the main-thread renderers below.
+    // Kill switch: localStorage.setItem('optimizer_worker', '0') + reload.
+    const WORKER_RENDERER = (() => {
+        try { return localStorage.getItem('optimizer_worker') !== '0'; } catch (e) { return true; }
+    })();
+
+    function workerRendererMain() {
+        let device, context, gpu, canvas, format;
+        let active = false, generation = 0, frames = 0, maxGap = 0, lastDraw = 0, boxW = 0, boxH = 0, warned = false, statsAt = 0, allowUp = false, fill = false, frameColor = null, frameFormat = null, pending = 0;
+        const uniforms = new Float32Array(28);
+        const fail = (e) => postMessage({ type: 'fail', message: String((e && e.message) || e) });
+        const configure = () => context.configure({ device, format, colorSpace: 'srgb', alphaMode: 'opaque' });
+
+        function draw(frame) {
+            const w = frame.displayWidth, h = frame.displayHeight;
+            const off = gpu.upscaleOff;
+            const [targetW, targetH] = gpuTargetSize(w, h, boxW, boxH, allowUp && !off, fill);
+            if (canvas.width !== targetW || canvas.height !== targetH) {
+                canvas.width = targetW;
+                canvas.height = targetH;
+                configure();
+            }
+            gpuDrawFrame(device, context, gpu, frame, w, h, uniforms);
+            if (frames % 64 === 0) {
+                frameColor = frame.colorSpace;
+                frameFormat = frame.format;
+            }
+            if (off && !warned) {
+                warned = true;
+                postMessage({ type: 'upscale-off' });
+            }
+        }
+
+        async function pump(readable, mine) {
+            const reader = readable.getReader();
+            let errors = 0, first = true;
+            try {
+                for (;;) {
+                    const { value: frame, done } = await reader.read();
+                    if (done) break;
+                    let error = null, drawn = false;
+                    if (active && mine === generation) {
+                        try {
+                            draw(frame);
+                            drawn = true;
+                            const now = performance.now();
+                            if (lastDraw) maxGap = Math.max(maxGap, now - lastDraw);
+                            lastDraw = now;
+                            frames++;
+                            errors = 0;
+                            if (first) { first = false; postMessage({ type: 'frame' }); }
+                        } catch (e) { error = e; }
+                    }
+                    // The decoder reuses a frame's surface as soon as the frame is closed, so a drawn
+                    // frame stays open until the GPU has read it: closing early shows up as green
+                    // garbage. Never more than 4 held, or the decoder's frame pool would stall.
+                    if (drawn && pending < 4) {
+                        pending++;
+                        const release = () => { pending--; frame.close(); };
+                        device.queue.onSubmittedWorkDone().then(release, release);
+                    } else {
+                        frame.close();
+                    }
+                    if (mine !== generation) { reader.cancel().catch(() => {}); return; }
+                    // Transient GPU errors skip a frame; ~90 in a row is a dead pipeline
+                    if (error && ++errors >= 90) throw error;
+                }
+                if (mine === generation) postMessage({ type: 'ended' });
+            } catch (e) { fail(e); }
+        }
+
+        onmessage = async ({ data: m }) => {
+            try {
+                if (m.type === 'init') {
+                    canvas = m.canvas;
+                    allowUp = m.upscale;
+                    const adapter = await navigator.gpu.requestAdapter(m.adapterOptions);
+                    if (!adapter) throw new Error('no WebGPU adapter');
+                    device = await adapter.requestDevice({ requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [] });
+                    device.lost.then((info) => fail('device lost: ' + info.message));
+                    context = canvas.getContext('webgpu');
+                    format = navigator.gpu.getPreferredCanvasFormat();
+                    configure();
+                    gpu = gpuCreatePipeline(device, m.shader, format, m.upscaleShader);
+                    postMessage({ type: 'ready' });
+                } else if (m.type === 'uniforms') {
+                    uniforms.set(m.data);
+                    gpu.dirty = true;
+                    active = m.active;
+                    if (!active) lastDraw = 0;
+                } else if (m.type === 'box') {
+                    boxW = m.w;
+                    boxH = m.h;
+                    fill = m.fill;
+                } else if (m.type === 'stream') {
+                    pump(m.readable, ++generation);
+                } else if (m.type === 'stats') {
+                    const now = performance.now();
+                    postMessage({ type: 'stats', frames, maxGap, gpuMs: gpu.gpuMs, ms: now - statsAt, upscaleOff: gpu.upscaleOff,
+                        color: frameColor ? [frameColor.primaries, frameColor.transfer, frameColor.matrix, frameColor.fullRange ? 'full' : 'limited', frameFormat].join('/') : '?' });
+                    statsAt = now;
+                    frames = 0;
+                    maxGap = 0;
+                }
+            } catch (e) { fail(e); }
+        };
+    }
+
+    class WorkerVideoRenderer {
+        constructor() {
+            this.canvas = null;
+            this.videoElement = null;
+            this.worker = null;
+            this.isActive = false;
+            this.onFail = null;
+            this._running = false;
+            this._hasFrame = false;
+            this._track = null;
+            this._data = new Float32Array(28);
+            this._rebind = () => { try { this._bind(); } catch (e) { this._fail(e.message); } };
+        }
+
+        static supported(video) {
+            return WORKER_RENDERER && !!navigator.gpu &&
+                typeof MediaStreamTrackProcessor === 'function' &&
+                typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function' &&
+                !!video.srcObject?.getVideoTracks?.()[0];
+        }
+
+        // Resolves true once the worker owns a working GPU pipeline and the stream.
+        init(videoElement) {
+            return new Promise((resolve) => {
+                let settled = false;
+                const done = (ok) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    if (!ok) this.destroy();
+                    resolve(ok);
+                };
+                const timer = setTimeout(() => done(false), 4000);
+                try {
+                    this.videoElement = videoElement;
+                    const source = `${gpuCreatePipeline}\n${gpuTargetSize}\n${gpuDrawFrame}\n(${workerRendererMain})()`;
+                    this.worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+                    this.worker.onerror = (e) => (settled ? this._fail(e.message) : done(false));
+                    this.worker.onmessage = ({ data: m }) => {
+                        if (m.type === 'ready') {
+                            try { this._bind(); done(true); } catch (e) { done(false); }
+                        } else if (m.type === 'frame') {
+                            this._hasFrame = true;
+                            this._sync();
+                        } else if (m.type === 'ended') {
+                            // Track ended: show the raw video until a new track is bound
+                            this._track = null;
+                            this._hasFrame = false;
+                            this._sync();
+                            this._rebind();
+                        } else if (m.type === 'stats') {
+                            this._stats = m;
+                        } else if (m.type === 'upscale-off') {
+                            showNotification(t('upscaleOffNotif'));
+                        } else if (m.type === 'fail') {
+                            if (settled) this._fail(m.message); else done(false);
+                        }
+                    };
+
+                    this.canvas = document.createElement('canvas');
+                    this.canvas.id = 'optimizer-webgpu-canvas';
+                    this.canvas.style.cssText = `
+                        position: absolute; top: 0; left: 0;
+                        width: 100%; height: 100%;
+                        pointer-events: none;
+                        object-fit: contain;
+                        will-change: transform;
+                        contain: strict;
+                        display: none;
+                    `;
+                    const parent = videoElement.parentElement;
+                    if (parent) {
+                        parent.style.position = parent.style.position || 'relative';
+                        parent.insertBefore(this.canvas, videoElement.nextSibling);
+                    }
+                    const offscreen = this.canvas.transferControlToOffscreen();
+                    this.worker.postMessage({
+                        type: 'init',
+                        canvas: offscreen,
+                        shader: WGSL_SHADER,
+                        upscaleShader: WGSL_UPSCALE,
+                        upscale: UPSCALE,
+                        // Chrome on Windows ignores powerPreference and logs a warning (crbug.com/369219127)
+                        adapterOptions: /Win/i.test(navigator.platform) ? {} : { powerPreference: 'high-performance' },
+                    }, [offscreen]);
+                    // A new srcObject (reconnect, 60<->120 FPS switch) carries a new track
+                    videoElement.addEventListener('loadedmetadata', this._rebind);
+                    this._boxObserver = observeDeviceBox(this.canvas, (w, h) => {
+                        this._boxW = w;
+                        this._boxH = h;
+                        this.refreshBox();
+                    });
+                } catch (e) {
+                    done(false);
+                }
+            });
+        }
+
+        _bind() {
+            const track = this.videoElement?.srcObject?.getVideoTracks?.()[0];
+            if (!this.worker || !track || track === this._track || track.readyState !== 'live') return;
+            this._track = track;
+            this._hasFrame = false;
+            this._sync();
+            // maxBufferSize 1: a late worker gets the newest frame, never a backlog
+            const { readable } = new MediaStreamTrackProcessor({ track, maxBufferSize: 1 });
+            this.worker.postMessage({ type: 'stream', readable }, [readable]);
+        }
+
+        refreshBox() {
+            if (this.worker) this.worker.postMessage({ type: 'box', w: this._boxW || 0, h: this._boxH || 0, fill: CONFIG.display.stretchMode });
+        }
+
+        // Returns the last sample and requests the next one
+        poll() {
+            const s = this._stats;
+            if (this.worker) this.worker.postMessage({ type: 'stats' });
+            if (!s) return 'starting';
+            return `${Math.round(s.frames * 1000 / s.ms)} fps, max gap ${Math.round(s.maxGap)}ms, gpu ${s.gpuMs.toFixed(1)}ms${s.upscaleOff ? ', upscale stopped' : ''}, color ${s.color}`;
+        }
+
+        _fail(message) {
+            console.warn('[Optimizer+] Worker renderer failed, falling back to main thread:', message);
+            const onFail = this.onFail;
+            this.destroy();
+            if (onFail) onFail();
+        }
+
+        // The canvas replaces the video only while it actually has frames to show
+        _sync() {
+            if (!this.canvas || !this.videoElement) return;
+            const show = this.isActive && this._running && this._hasFrame;
+            const display = show ? 'block' : 'none';
+            const opacity = show ? '0.01' : '1';
+            if (this.canvas.style.display !== display) this.canvas.style.display = display;
+            if (this.videoElement.style.opacity !== opacity) this.videoElement.style.opacity = opacity;
+        }
+
+        _post() {
+            if (this.worker) this.worker.postMessage({ type: 'uniforms', data: this._data, active: this.isActive && this._running });
+            this._sync();
+        }
+
+        updateUniforms(config) {
+            this.isActive = config.enhancer.enabled || config.filters.enabled;
+            packUniforms(config, this._data);
+            this._post();
+        }
+
+        startRenderLoop() {
+            this._running = true;
+            this._post();
+        }
+
+        stopRenderLoop() {
+            this._running = false;
+            this._post();
+        }
+
+        destroy() {
+            if (this.videoElement) {
+                this.videoElement.removeEventListener('loadedmetadata', this._rebind);
+                this.videoElement.style.opacity = '1';
+            }
+            if (this._boxObserver) this._boxObserver.disconnect();
+            if (this.worker) this.worker.terminate();
+            if (this.canvas && this.canvas.parentElement) this.canvas.parentElement.removeChild(this.canvas);
+            this.worker = null;
+            this.canvas = null;
+            this.videoElement = null;
+            this._track = null;
+            this.onFail = null;
+        }
+    }
+
+    // WebGPUVideoRenderer — main-thread WebGPU (fallback when the worker path is unavailable)
+    class WebGPUVideoRenderer {
+        constructor() {
+            this.device = null;
+            this.context = null;
+            this.videoElement = null;
+            this.canvas = null;
+            this.animationId = null;
+            this.isActive = false;
+            this._attached = false;
+            this._lastConfig = null;
+            this._canvasFormat = null;
+            this._useRVFC = typeof HTMLVideoElement !== 'undefined' &&
+                            'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+            this._lastVideoTime = 0;
+            // True once GPU rendering has failed continuously; the raw video is shown instead
+            this._failOpen = false;
+            // Pre-allocated to avoid GC pressure in the render loop
+            this._uniformData = new Float32Array(28);  // 112 bytes (WGSL-aligned struct)
+        }
+
+        async init(videoElement) {
+            if (!videoElement || this._attached) return false;
+            if (!navigator.gpu) {
+                console.error('[Optimizer+] WebGPU not available — Chrome 113+ / Edge 113+ required');
+                return false;
+            }
+
+            this.videoElement = videoElement;
+
+            try {
+                // Chrome on Windows ignores powerPreference and logs a warning (crbug.com/369219127)
+                const adapter = await navigator.gpu.requestAdapter(/Win/i.test(navigator.platform)
+                    ? {} : { powerPreference: 'high-performance' });
+                if (!adapter) {
+                    console.error('[Optimizer+] No WebGPU adapter found');
+                    return false;
+                }
+                this.device = await adapter.requestDevice({ requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [] });
+
+                this.device.lost.then((info) => {
+                    console.warn('[Optimizer+] WebGPU device lost:', info.message);
+                    this.stopRenderLoop();
+                    if (this.videoElement) this.videoElement.style.opacity = '1';
+                    if (this.canvas) this.canvas.style.display = 'none';
+                    this._attached = false;
+                });
+
+                this.canvas = document.createElement('canvas');
+                this.canvas.id = 'optimizer-webgpu-canvas';
+                this.canvas.style.cssText = `
+                    position: absolute; top: 0; left: 0;
+                    width: 100%; height: 100%;
+                    pointer-events: none;
+                    object-fit: contain;
+                    will-change: transform;
+                    contain: strict;
+                `;
+
+                // Set initial size to match the streaming video to prevent low-resolution swap chain
+                const initialW = videoElement.videoWidth || 1920;
+                const initialH = videoElement.videoHeight || 1080;
+                this.canvas.width = initialW;
+                this.canvas.height = initialH;
+
+                const parent = videoElement.parentElement;
+                if (parent) {
+                    parent.style.position = parent.style.position || 'relative';
+                    parent.insertBefore(this.canvas, videoElement.nextSibling);
+                }
+
+                this.context = this.canvas.getContext('webgpu');
+                this._canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+                this.context.configure({
+                    device: this.device,
+                    format: this._canvasFormat,
+                    colorSpace: 'srgb',
+                    alphaMode: 'opaque',
+                });
+
+                this._gpu = gpuCreatePipeline(this.device, WGSL_SHADER, this._canvasFormat, WGSL_UPSCALE);
+                this._boxObserver = observeDeviceBox(this.canvas, (w, h) => { this._boxW = w; this._boxH = h; });
+                this._attached = true;
+
+                console.log('[Optimizer+] WebGPU pipeline initialized (true zero-copy mode)');
+                return true;
+            } catch (e) {
+                console.error('[Optimizer+] WebGPU initialization failed, falling back to WebGL2:', e);
+                this.destroy();
+                return false;
+            }
+        }
+
+        updateUniforms(config) {
+            this._lastConfig = config;
+            if (!this.device) return;
+
+            const e = config.enhancer;
+            const f = config.filters;
+
+            const wasActive = this.isActive;
+            this.isActive = e.enabled || f.enabled;
+
+            // Guard style writes to avoid needless style recalculation
+            if (this.canvas) {
+                const targetDisplay = this.isActive ? 'block' : 'none';
+                if (this.canvas.style.display !== targetDisplay) {
+                    this.canvas.style.display = targetDisplay;
+                }
+            }
+            if (!this.isActive && this.videoElement && this.videoElement.style.opacity !== '1') {
+                this.videoElement.style.opacity = '1';
+            }
+            if (this.isActive && !wasActive && !this.animationId) {
+                this.startRenderLoop();
+            }
+
+            const data = this._uniformData;
+            packUniforms(config, data);
+            if (this._gpu) this._gpu.dirty = true;
+        }
+
+        render() {
+            if (!this.isActive) return;
+            const video = this.videoElement;
+            if (!video || video.readyState < 2) return;
+
+            if (!this._useRVFC) {
+                if (video.currentTime === this._lastVideoTime) return;
+                this._lastVideoTime = video.currentTime;
+            }
+
+            const texW = video.videoWidth || 1920;
+            const texH = video.videoHeight || 1080;
+            if (!texW || !texH) return;
+
+            try {
+                const off = this._gpu.upscaleOff;
+                const [targetW, targetH] = gpuTargetSize(texW, texH, this._boxW, this._boxH, UPSCALE && !off, CONFIG.display.stretchMode);
+                if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+                    this.canvas.width = targetW;
+                    this.canvas.height = targetH;
+                    this.context.configure({
+                        device: this.device,
+                        format: this._canvasFormat,
+                        colorSpace: 'srgb',
+                        alphaMode: 'opaque'
+                    });
+                }
+
+                gpuDrawFrame(this.device, this.context, this._gpu, video, texW, texH, this._uniformData);
+                if (off && !this._upscaleWarned) {
+                    this._upscaleWarned = true;
+                    showNotification(t('upscaleOffNotif'));
+                }
+                this._failStreak = 0;
+
+                if (video.style.opacity !== '0.01') {
+                    video.style.opacity = '0.01';
+                }
+            } catch (e) {
+                // Skip frame on error — don't kill the loop
+                if (!this._errorLogged) {
+                    console.warn('[Optimizer+] WebGPU render frame skipped:', e.message);
+                    this._errorLogged = true;
+                    setTimeout(() => { this._errorLogged = false; }, 5000);
+                }
+                // Fail-open: if rendering keeps failing (~90 frames) the canvas would freeze on the last
+                // frame while the hidden video keeps playing. Show the raw video, hide the canvas
+                // and stop the loop.
+                this._failStreak = (this._failStreak || 0) + 1;
+                if (this._failStreak >= 90) {
+                    console.warn('[Optimizer+] WebGPU fail-open: rendu défaillant ~1.5s → vidéo brute affichée (filtres désactivés)');
+                    this._failOpen = true;
+                    this.stopRenderLoop();
+                    if (this.videoElement) this.videoElement.style.opacity = '1';
+                    if (this.canvas) this.canvas.style.display = 'none';
+                    this._attached = false;
+                }
+            }
+        }
+
+        startRenderLoop() {
+            if (this.animationId) return;
+            // Never restart the loop after fail-open
+            if (this._failOpen) return;
+
+            const loop = () => {
+                this.render();
+                if (!this.isActive) {
+                    this.animationId = null;
+                    return;
+                }
+                if (this._useRVFC && this.videoElement) {
+                    this.animationId = this.videoElement.requestVideoFrameCallback(loop);
+                } else {
+                    this.animationId = requestAnimationFrame(loop);
+                }
+            };
+
+            if (this._useRVFC && this.videoElement) {
+                this.animationId = this.videoElement.requestVideoFrameCallback(loop);
+            } else {
+                this.animationId = requestAnimationFrame(loop);
+            }
+
+            console.log('[Optimizer+] WebGPU render loop started' +
+                (this._useRVFC ? ' (requestVideoFrameCallback sync)' : ' (VSync-aligned rAF)'));
+        }
+
+        stopRenderLoop() {
+            if (this.animationId) {
+                if (this._useRVFC && this.videoElement) {
+                    this.videoElement.cancelVideoFrameCallback(this.animationId);
+                } else {
+                    cancelAnimationFrame(this.animationId);
+                }
+                this.animationId = null;
+            }
+        }
+
+        destroy() {
+            this.stopRenderLoop();
+            if (this.videoElement) {
+                this.videoElement.style.opacity = '1';
+            }
+            if (this.canvas && this.canvas.parentElement) {
+                this.canvas.parentElement.removeChild(this.canvas);
+            }
+            if (this._boxObserver) this._boxObserver.disconnect();
+            if (this.device) {
+                this.device.destroy();
+            }
+            this._attached = false;
+            this.device = null;
+            this.context = null;
+            this.canvas = null;
+            this.videoElement = null;
+        }
+    }
+
+    // VideoEnhancer — picks and drives the active renderer
     class VideoEnhancer {
         constructor() {
             this.enabled = CONFIG.enhancer.enabled;
             this.filtersEnabled = CONFIG.filters.enabled;
-            this.canvas = null;
-            this.ctx = null;
-            this.gl = null;
             this.videoElement = null;
-            this.animationId = null;
-            this.filterString = '';
-            this.svgFiltersCreated = false;
 
-            // ===============================================================
-            // ANTI-ARTEFACTS: Debounce pour éviter le tearing/flickering
-            // ===============================================================
-            this._filterUpdateScheduled = false;
-            this._lastFilterUpdate = 0;
-            this._minUpdateInterval = 16; // ~60fps max
-
-            this.updateFilterString();
+            // Renderer order: worker WebGPU, main-thread WebGPU, WebGL2
+            this._workerRenderer = null;
+            this._workerFailed = false;
+            this._gpuRenderer = new WebGPUVideoRenderer();
+            this._glRenderer = new WebGLVideoRenderer();
+            this._webgpuActive = false;
+            this._webglActive = false;
+            this._initInProgress = null; // Guards against a concurrent WebGPU init (async)
         }
 
-        // ===============================================================
-        // Compte le nombre de filtres SVG actifs (pour limiter les artefacts)
-        // ===============================================================
-        countActiveFilters() {
-            const filters = CONFIG.filters;
-            let count = 0;
-            if (filters.cas?.enabled) count++;
-            if (filters.usm?.enabled) count++;
-            if (filters.clarity?.enabled) count++;
-            if (filters.denoise?.enabled) count++;
-            if (filters.vibrance?.enabled) count++;
-            if (filters.deband?.enabled) count++;
-            return count;
+        refreshBox() {
+            if (this._workerRenderer) this._workerRenderer.refreshBox();
         }
 
-        // ===============================================================
-        // Auto-limite les filtres si trop sont actifs (évite artefacts de composition)
-        // Ordre de désactivation: vibrance > denoise > clarity > deband > CAS > USM
-        // ===============================================================
-        enforceFilterLimit() {
-            const maxFilters = CONFIG.performance?.maxFiltersActive || 4;
-            let activeCount = this.countActiveFilters();
-
-            if (activeCount <= maxFilters) return false;
-
-            console.warn(`[Optimizer+] ${activeCount} filtres actifs, limite: ${maxFilters} - désactivation auto`);
-
-            // Ordre de désactivation par coût de rendu (du plus coûteux au moins coûteux)
-            const costOrder = ['vibrance', 'denoise', 'clarity', 'deband', 'cas', 'usm'];
-            let toDisable = activeCount - maxFilters;
-
-            for (const filterName of costOrder) {
-                if (toDisable <= 0) break;
-                if (CONFIG.filters[filterName]?.enabled) {
-                    CONFIG.filters[filterName].enabled = false;
-                    console.log(`[Optimizer+] Filtre "${filterName}" désactivé automatiquement (limite atteinte)`);
-                    toDisable--;
-                }
-            }
-
-            return true; // Des filtres ont été désactivés
+        describe() {
+            const r = this._getActiveRenderer();
+            if (!r) return 'render none';
+            const size = r.canvas ? `canvas ${r.canvas.width}x${r.canvas.height}` : 'no canvas';
+            if (r === this._workerRenderer) return `render worker ${r.poll()}, ${size}`;
+            return `render ${r === this._gpuRenderer ? 'webgpu-main' : 'webgl2'}, ${size}`;
         }
 
-        updateFilterString() {
-            const { contrast, saturation, brightness } = CONFIG.enhancer;
-            const filters = CONFIG.filters;
-
-            let cssFilters = [];
-
-            // Filtres CSS de base (très performants, toujours appliqués si enabled)
-            if (this.enabled) {
-                if (contrast !== 1.0) {
-                    cssFilters.push(`contrast(${contrast})`);
-                }
-                if (saturation !== 1.0) {
-                    cssFilters.push(`saturate(${saturation})`);
-                }
-                if (brightness !== 1.0) {
-                    cssFilters.push(`brightness(${brightness})`);
-                }
-
-                // Gamma et Exposure sont des filtres CSS légers
-                if (filters.gamma?.enabled && filters.gamma.value !== 1.0) {
-                    // Gamma simulé via brightness curve
-                    const gammaCorrection = Math.pow(filters.gamma.value, 0.5);
-                    cssFilters.push(`brightness(${gammaCorrection})`);
-                }
-
-                if (filters.exposure?.enabled && filters.exposure.value !== 0) {
-                    const exposureFactor = 1 + filters.exposure.value * 0.5;
-                    cssFilters.push(`brightness(${exposureFactor})`);
-                }
-            }
-
-            // Filtres SVG avancés
-            if (filters.enabled) {
-                if (filters.cas?.enabled) {
-                    cssFilters.push(`url(#optimizer-cas-filter)`);
-                }
-                if (filters.usm?.enabled) {
-                    cssFilters.push(`url(#optimizer-usm-filter)`);
-                }
-                if (filters.clarity?.enabled) {
-                    cssFilters.push(`url(#optimizer-clarity-filter)`);
-                }
-                if (filters.denoise?.enabled) {
-                    cssFilters.push(`url(#optimizer-denoise-filter)`);
-                }
-                if (filters.vibrance?.enabled) {
-                    cssFilters.push(`url(#optimizer-vibrance-filter)`);
-                }
-                if (filters.deband?.enabled) {
-                    cssFilters.push(`url(#optimizer-deband-filter)`);
-                }
-            }
-
-            this.filterString = cssFilters.length > 0 ? cssFilters.join(' ') : 'none';
-        }
-
-        createSVGFilters() {
-            if (this.svgFiltersCreated) {
-                this.updateSVGFilters();
-                return;
-            }
-
-            const svgNS = "http://www.w3.org/2000/svg";
-            const svg = document.createElementNS(svgNS, "svg");
-            svg.setAttribute("id", "optimizer-svg-filters");
-            svg.setAttribute("width", "0");
-            svg.setAttribute("height", "0");
-            svg.style.position = "absolute";
-            svg.style.visibility = "hidden";
-
-            svg.innerHTML = this.generateSVGFilters();
-            document.body.appendChild(svg);
-            this.svgFiltersCreated = true;
-
-            console.log('[Optimizer+] Filtres SVG avancés créés');
-        }
-
-        generateSVGFilters() {
-            const filters = CONFIG.filters;
-            const enhancer = CONFIG.enhancer;
-
-            return `
-                <defs>
-                    <!-- USM (Unsharp Mask) Filter - Netteté professionnelle -->
-                    <filter id="optimizer-usm-filter" x="-10%" y="-10%" width="120%" height="120%">
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="${filters.usm.radius}" result="blur"/>
-                        <feComponentTransfer in="SourceGraphic" result="original">
-                            <feFuncR type="identity"/>
-                            <feFuncG type="identity"/>
-                            <feFuncB type="identity"/>
-                        </feComponentTransfer>
-                        <feComposite in="original" in2="blur" operator="arithmetic"
-                            k1="0" k2="${1 + filters.usm.amount}" k3="${-filters.usm.amount}" k4="0" result="sharpen"/>
-                        <feComposite in="sharpen" in2="SourceGraphic" operator="in"/>
-                    </filter>
-
-                    <!-- CAS (Contrast Adaptive Sharpening) Filter - AMD FidelityFX style -->
-                    <filter id="optimizer-cas-filter" x="0%" y="0%" width="100%" height="100%">
-                        <feConvolveMatrix
-                            order="3"
-                            kernelMatrix="
-                                0 ${-filters.cas.sharpness * 0.25} 0
-                                ${-filters.cas.sharpness * 0.25} ${1 + filters.cas.sharpness} ${-filters.cas.sharpness * 0.25}
-                                0 ${-filters.cas.sharpness * 0.25} 0
-                            "
-                            divisor="1"
-                            bias="0"
-                            preserveAlpha="true"
-                            edgeMode="duplicate"/>
-                    </filter>
-
-                    <!-- Clarity Filter - Micro-contraste et détails -->
-                    <filter id="optimizer-clarity-filter" x="-5%" y="-5%" width="110%" height="110%">
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur2"/>
-                        <feComposite in="blur1" in2="blur2" operator="arithmetic"
-                            k1="0" k2="1" k3="-1" k4="0" result="highpass"/>
-                        <feComposite in="SourceGraphic" in2="highpass" operator="arithmetic"
-                            k1="0" k2="1" k3="${filters.clarity.amount}" k4="0"/>
-                    </filter>
-
-                    <!-- Denoise Filter - Réduction de bruit pour streams compressés -->
-                    <filter id="optimizer-denoise-filter" x="0%" y="0%" width="100%" height="100%">
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="${filters.denoise.strength * 1.5}" result="blur"/>
-                        <feMorphology in="SourceGraphic" operator="dilate" radius="${filters.denoise.strength * 0.5}" result="dilate"/>
-                        <feComposite in="blur" in2="dilate" operator="arithmetic"
-                            k1="0" k2="${1 - filters.denoise.strength * 0.3}" k3="${filters.denoise.strength * 0.3}" k4="0"/>
-                    </filter>
-
-                    <!-- Vibrance Filter - Saturation intelligente -->
-                    <filter id="optimizer-vibrance-filter" x="0%" y="0%" width="100%" height="100%">
-                        <feColorMatrix type="matrix" values="
-                            ${1 + filters.vibrance.amount * 0.3} ${-filters.vibrance.amount * 0.15} ${-filters.vibrance.amount * 0.15} 0 0
-                            ${-filters.vibrance.amount * 0.1} ${1 + filters.vibrance.amount * 0.2} ${-filters.vibrance.amount * 0.1} 0 0
-                            ${-filters.vibrance.amount * 0.1} ${-filters.vibrance.amount * 0.1} ${1 + filters.vibrance.amount * 0.4} 0 0
-                            0 0 0 1 0
-                        "/>
-                    </filter>
-
-                    <!-- Deband Filter - Anti-banding pour streams compressés -->
-                    <!-- OPTIMISÉ: baseFrequency réduite, seed déterministe, scale modéré pour éviter flickering -->
-                    <filter id="optimizer-deband-filter" x="0%" y="0%" width="100%" height="100%">
-                        <feTurbulence type="fractalNoise" baseFrequency="0.3" numOctaves="2" result="noise" seed="1"/>
-                        <feDisplacementMap in="SourceGraphic" in2="noise" scale="${(filters.deband?.strength || 0.3) * 0.8}"
-                            xChannelSelector="R" yChannelSelector="G"/>
-                    </filter>
-
-                    <!-- Legacy sharpen filter -->
-                    <filter id="optimizer-sharpen-filter">
-                        <feConvolveMatrix
-                            order="3"
-                            kernelMatrix="0 -${enhancer.sharpness} 0 -${enhancer.sharpness} ${1 + 4 * enhancer.sharpness} -${enhancer.sharpness} 0 -${enhancer.sharpness} 0"
-                            preserveAlpha="true"/>
-                    </filter>
-                </defs>
-            `;
-        }
-
-        updateSVGFilters() {
-            const svg = document.getElementById('optimizer-svg-filters');
-            if (svg) {
-                svg.innerHTML = this.generateSVGFilters();
-            }
+        _getActiveRenderer() {
+            if (this._workerRenderer) return this._workerRenderer;
+            if (this._webgpuActive) return this._gpuRenderer;
+            if (this._webglActive) return this._glRenderer;
+            return null;
         }
 
         applyToVideo(videoElement) {
             if (!videoElement) return;
-
             this.videoElement = videoElement;
 
-            if (this.enabled || this.filtersEnabled) {
-                this.updateFilterString();
-                videoElement.style.filter = this.filterString;
+            const activeRenderer = this._getActiveRenderer();
+
+            // Handle video element replacement (e.g., stream reconnect)
+            if (activeRenderer && activeRenderer.videoElement !== videoElement) {
+                console.log('[Optimizer+] Video element changed. Rebinding renderer...');
+                activeRenderer.destroy();
+                this._workerRenderer = null;
+                this._webgpuActive = false;
+                this._webglActive = false;
             }
 
-            this.applyEdgeEnhancements(videoElement);
+            if (this._getActiveRenderer()) {
+                this._getActiveRenderer().updateUniforms(CONFIG);
+                this._getActiveRenderer().startRenderLoop();
+                return;
+            }
 
-            console.log('[Optimizer+] Enhancer + Filtres avancés appliqués');
+            // The video observer can call applyToVideo twice before the async WebGPU init
+            // resolves: a second init would leak a canvas and a GPU device
+            if (this._initInProgress === videoElement) return;
+
+            if (!this._workerFailed && WorkerVideoRenderer.supported(videoElement)) {
+                this._initInProgress = videoElement;
+                const renderer = new WorkerVideoRenderer();
+                const fallBack = () => {
+                    this._workerRenderer = null;
+                    this._workerFailed = true;
+                    this.applyToVideo(videoElement);
+                };
+                renderer.onFail = fallBack;
+                renderer.init(videoElement).then((ok) => {
+                    this._initInProgress = null;
+                    if (!ok) return fallBack();
+                    this._workerRenderer = renderer;
+                    renderer.updateUniforms(CONFIG);
+                    renderer.startRenderLoop();
+                    console.log('[Optimizer+] Worker renderer active (off-main-thread WebGPU)');
+                });
+                return;
+            }
+
+            if (navigator.gpu) {
+                this._initInProgress = videoElement;
+                this._gpuRenderer.init(videoElement)
+                    .then((success) => {
+                        this._initInProgress = null;
+                        if (success) {
+                            this._webgpuActive = true;
+                            this._gpuRenderer.updateUniforms(CONFIG);
+                            this._gpuRenderer.startRenderLoop();
+                            console.log('[Optimizer+] WebGPU shaders active (true zero-copy)');
+                        } else {
+                            this._tryWebGL2Fallback(videoElement);
+                        }
+                    })
+                    .catch((err) => {
+                        this._initInProgress = null;
+                        console.error('[Optimizer+] WebGPU init promise rejected, falling back to WebGL2:', err);
+                        this._tryWebGL2Fallback(videoElement);
+                    });
+            } else {
+                this._tryWebGL2Fallback(videoElement);
+            }
         }
 
-        applyEdgeEnhancements(videoElement) {
-            try {
-                // ===============================================================
-                // v3.6: MODE PERFORMANCE - Optimisations légères uniquement
-                // ===============================================================
+        _tryWebGL2Fallback(videoElement) {
+            const ok = this._glRenderer.init(videoElement);
+            if (ok) {
+                this._webglActive = true;
+                this._glRenderer.updateUniforms(CONFIG);
+                this._glRenderer.startRenderLoop();
+                console.log('[Optimizer+] WebGL2 fallback active');
+            } else {
+                console.warn('[Optimizer+] No GPU renderer available — filters disabled');
+            }
+        }
 
-                // En mode Performance, appliquer un minimum de styles
-                if (CONFIG.display.performanceMode) {
-                    // Juste le rendu de base sans couches GPU supplémentaires
-                    videoElement.style.imageRendering = 'auto';
-                    console.log('[Optimizer+] Mode Performance: enhancements désactivés');
-                    return;
+        updateFilterString() {
+            const r = this._getActiveRenderer();
+            if (r) r.updateUniforms(CONFIG);
+        }
+
+        applyFiltersToAllVideos() {
+            const r = this._getActiveRenderer();
+            if (r) r.updateUniforms(CONFIG);
+        }
+
+        removeFiltersFromAllVideos() {
+            const r = this._getActiveRenderer();
+            if (r) {
+                r.stopRenderLoop();
+                if (r.videoElement) r.videoElement.style.opacity = '1';
+                if (r.canvas) r.canvas.style.display = 'none';
+            }
+        }
+
+        ensureActive() {
+            const r = this._getActiveRenderer();
+            if (r && r.canvas && r.videoElement) {
+                r.isActive = true;
+                r.canvas.style.display = 'block';
+                if (r.videoElement.style.opacity !== '0.01') {
+                    r.videoElement.style.opacity = '0.01';
                 }
-
-                // ===============================================================
-                // MODE NORMAL: Optimisations GPU sélectives
-                // ===============================================================
-
-                // Forcer l'accélération GPU uniquement si activée
-                if (CONFIG.performance.gpuAcceleration) {
-                    videoElement.style.transform = 'translateZ(0)';
-                    videoElement.style.backfaceVisibility = 'hidden';
-                }
-
-                // Anti-ghosting simplifié
-                videoElement.style.mixBlendMode = 'normal';
-
-                // Ne PAS utiliser willChange en permanence - cause des problèmes de mémoire GPU
-                // Sera activé temporairement lors des changements de filtres uniquement
-
-                // Qualité de rendu - 'auto' est plus performant
-                videoElement.style.imageRendering = 'auto';
-
-                // NE PAS utiliser 'contain' - cause des repaints inutiles sur certains navigateurs
-
-                if (!CONFIG.performance.disableLogsInGame) {
-                    console.log('[Optimizer+] Edge enhancements appliqués (mode normal)');
-                }
-
-            } catch(e) {
-                console.warn('[Optimizer+] Edge enhancements non disponibles');
+                r.startRenderLoop();
             }
         }
 
         updateSettings(settings) {
             Object.assign(CONFIG.enhancer, settings);
-            // Utiliser le debounce pour éviter le tearing sur les sliders
-            this.scheduleFilterUpdate();
-            Storage.set('config', CONFIG);
+            this.updateFilterString();
+            saveConfig(true);
         }
 
         updateFilterSettings(filterName, settings) {
             if (CONFIG.filters[filterName]) {
                 Object.assign(CONFIG.filters[filterName], settings);
-                // Utiliser le debounce pour éviter le tearing sur les sliders
-                this.scheduleFilterUpdate();
-                Storage.set('config', CONFIG);
+                // Moving a filter slider enables that filter; otherwise the slider appears to do nothing
+                if (!CONFIG.filters[filterName].enabled) {
+                    CONFIG.filters[filterName].enabled = true;
+                    const cb = document.querySelector(`.optimizer-filter-checkbox[data-filter="${filterName}"]`);
+                    if (cb) cb.checked = true;
+                }
+                this.updateFilterString();
+                saveConfig(true);
             }
         }
 
         applyPreset(presetName) {
             const preset = FILTER_PRESETS[presetName];
             if (!preset) return;
-
             CONFIG.filters.preset = presetName;
 
-            if (preset.enhancer) {
-                Object.assign(CONFIG.enhancer, preset.enhancer);
+            // Automatically turn on advanced filters when a preset is applied
+            if (presetName !== 'custom') {
+                CONFIG.filters.enabled = true;
+                this.filtersEnabled = true;
             }
+
+            if (preset.enhancer) Object.assign(CONFIG.enhancer, preset.enhancer);
             if (preset.filters) {
                 Object.keys(preset.filters).forEach(key => {
-                    if (CONFIG.filters[key]) {
-                        Object.assign(CONFIG.filters[key], preset.filters[key]);
-                    }
+                    if (CONFIG.filters[key]) Object.assign(CONFIG.filters[key], preset.filters[key]);
                 });
             }
-
-            this.updateSVGFilters();
             this.updateFilterString();
-            this.applyFiltersToAllVideos();
-
-            Storage.set('config', CONFIG);
-            console.log(`[Optimizer+] Préset "${preset.name}" appliqué`);
+            saveConfig(true);
+            console.log('[Optimizer+] Preset "' + (preset.name || presetName) + '" applied');
         }
 
         toggle(enabled) {
             this.enabled = enabled;
             CONFIG.enhancer.enabled = enabled;
-
-            // Mettre à jour les filtres et appliquer immédiatement
             this.updateFilterString();
-            this.applyFiltersToAllVideos();
-
-            Storage.set('config', CONFIG);
-            console.log(`[Optimizer+] Enhancer ${enabled ? 'activé' : 'désactivé'}`);
+            saveConfig(true);
         }
 
         toggleFilters(enabled) {
             this.filtersEnabled = enabled;
             CONFIG.filters.enabled = enabled;
-
-            // Mettre à jour et appliquer immédiatement
             this.updateFilterString();
-            this.applyFiltersToAllVideos();
-
-            Storage.set('config', CONFIG);
-            console.log(`[Optimizer+] Filtres avancés ${enabled ? 'activés' : 'désactivés'}`);
+            saveConfig(true);
         }
 
         toggleFilter(filterName, enabled) {
             if (CONFIG.filters[filterName]) {
                 CONFIG.filters[filterName].enabled = enabled;
-
-                // Mettre à jour SVG, recalculer les filtres et appliquer
-                this.updateSVGFilters();
                 this.updateFilterString();
-                this.applyFiltersToAllVideos();
-
-                Storage.set('config', CONFIG);
-                console.log(`[Optimizer+] Filtre ${filterName} ${enabled ? 'activé' : 'désactivé'}`);
+                saveConfig(true);
             }
-        }
-
-        // ===============================================================
-        // Applique les filtres à toutes les vidéos avec limitation smart
-        // ===============================================================
-        applyFiltersToAllVideos() {
-            const videos = document.querySelectorAll('video');
-
-            // Vérifier et appliquer la limite de filtres actifs
-            if (this.filtersEnabled && this.enforceFilterLimit()) {
-                // Des filtres ont été désactivés, recalculer la string
-                this.updateFilterString();
-            }
-
-            const filterValue = (this.enabled || this.filtersEnabled) ? this.filterString : '';
-
-            videos.forEach(video => {
-                video.style.filter = filterValue;
-                this.videoElement = video; // Garder une référence
-
-                // S'assurer que les edge enhancements sont appliqués
-                if (!video.dataset.optimizerEnhanced) {
-                    this.applyEdgeEnhancements(video);
-                    video.dataset.optimizerEnhanced = 'true';
-                }
-            });
-        }
-
-        // ===============================================================
-        // v3.5: Utilise FilterBatchProcessor pour éviter flickering
-        // Queue l'opération pour traitement batched frame-aligned
-        // ===============================================================
-        scheduleFilterUpdate() {
-            FilterBatchProcessor.queueFilterUpdate(() => {
-                this.updateSVGFilters();
-                this.updateFilterString();
-                this.applyFiltersToAllVideos();
-            });
-        }
-
-        // ===============================================================
-        // v3.5: Méthode pour les sliders - anti-flickering
-        // ===============================================================
-        onFilterSliderChange(filterName, value) {
-            FilterBatchProcessor.queueFilterUpdate(() => {
-                if (CONFIG.filters[filterName] !== undefined) {
-                    if (typeof CONFIG.filters[filterName] === 'object') {
-                        // Pour les filtres avec sous-propriétés (usm.amount, cas.sharpness, etc.)
-                        const parts = filterName.split('.');
-                        if (parts.length === 2) {
-                            CONFIG.filters[parts[0]][parts[1]] = value;
-                        }
-                    } else {
-                        CONFIG.filters[filterName] = value;
-                    }
-                } else if (CONFIG.enhancer[filterName] !== undefined) {
-                    CONFIG.enhancer[filterName] = value;
-                }
-                this.updateFilterString();
-                this.updateSVGFilters();
-                this.applyFiltersToAllVideos();
-            });
         }
     }
 
     const videoEnhancer = new VideoEnhancer();
 
-    // ===============================================================================
-    // DRM HOOKS - Bypass HDCP et autres restrictions
-    // ===============================================================================
+    // DRM HOOKS
 
     function hookDRM() {
-        // MSMediaKeys (Edge Legacy / IE)
-        if (windowCtx.MSMediaKeys) {
-            if (windowCtx.MSMediaKeys.isTypeSupportedWithFeatures) {
-                windowCtx.MSMediaKeys.isTypeSupportedWithFeaturesOriginal = windowCtx.MSMediaKeys.isTypeSupportedWithFeatures;
-                windowCtx.MSMediaKeys.isTypeSupportedWithFeatures = function(keySystem, targetMediaCodec) {
-                    const reg = /,display-res-[x|y]=\d+,display-res-[x|y]=\d+/;
+        // Originals stay in closures (never exposed on globals); the flag prevents double hooking
+        if (windowCtx.MSMediaKeys && !windowCtx.MSMediaKeys.__optimizerHooked) {
+            windowCtx.MSMediaKeys.__optimizerHooked = true;
+
+            if (typeof windowCtx.MSMediaKeys.isTypeSupportedWithFeatures === 'function') {
+                const originalFn = windowCtx.MSMediaKeys.isTypeSupportedWithFeatures.bind(windowCtx.MSMediaKeys);
+                windowCtx.MSMediaKeys.isTypeSupportedWithFeatures = function (keySystem, targetMediaCodec) {
+                    if (typeof targetMediaCodec !== 'string') {
+                        return originalFn(keySystem, targetMediaCodec);
+                    }
+                    const reg = /,display-res-[xy]=\d+,display-res-[xy]=\d+/;
                     targetMediaCodec = targetMediaCodec.replace(reg, "");
 
                     if (CONFIG.drm.forceDolbyVision && targetMediaCodec.indexOf("ext-profile=dvh") !== -1) {
                         keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
                     }
-
                     if (CONFIG.codecs.forceHEVC && targetMediaCodec.indexOf("ext-profile=dvh") === -1 &&
                         (targetMediaCodec.indexOf("hvc1") !== -1 || targetMediaCodec.indexOf("hev1") !== -1)) {
                         keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
                     }
-
                     if (CONFIG.drm.forceHDCP && targetMediaCodec.indexOf("hdcp=") !== -1) {
                         targetMediaCodec = targetMediaCodec.replace(/hdcp=[12],?/g, "");
                     }
-
                     if (CONFIG.drm.forceUHD && targetMediaCodec.indexOf("decode-res-") !== -1) {
                         targetMediaCodec = targetMediaCodec.replace(/decode-res-[xy]=\d+,?/g, "");
                     }
-
-                    let r = this.isTypeSupportedWithFeaturesOriginal(keySystem, targetMediaCodec);
-
-                    if (CONFIG.drm.forceALL) {
-                        return "probably";
-                    }
-                    return r;
+                    if (CONFIG.drm.forceALL) return "probably";
+                    return originalFn(keySystem, targetMediaCodec);
                 };
             }
 
-            if (windowCtx.MSMediaKeys.isTypeSupported) {
-                windowCtx.MSMediaKeys.isTypeSupportedOriginal = windowCtx.MSMediaKeys.isTypeSupported;
-                windowCtx.MSMediaKeys.isTypeSupported = function(keySystem) {
-                    keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
-                    return this.isTypeSupportedOriginal(keySystem);
+            if (typeof windowCtx.MSMediaKeys.isTypeSupported === 'function') {
+                const originalFn = windowCtx.MSMediaKeys.isTypeSupported.bind(windowCtx.MSMediaKeys);
+                windowCtx.MSMediaKeys.isTypeSupported = function (keySystem) {
+                    if (typeof keySystem === 'string') {
+                        keySystem = keySystem.replace("com.microsoft.playready.hardware", "com.microsoft.playready");
+                    }
+                    return originalFn(keySystem);
                 };
             }
         }
 
         // Navigator MediaKeySystemAccess (Standard EME)
-        if (windowCtx.navigator.requestMediaKeySystemAccess) {
-            windowCtx.navigator.requestMediaKeySystemAccessOriginal = windowCtx.navigator.requestMediaKeySystemAccess;
-            windowCtx.navigator.requestMediaKeySystemAccess = async function(keySystem, options) {
-                let newKeySystem = keySystem;
+        if (windowCtx.navigator.requestMediaKeySystemAccess && !windowCtx.navigator.__optimizerEMEHooked) {
+            const original = windowCtx.navigator.requestMediaKeySystemAccess.bind(windowCtx.navigator);
+            Object.defineProperty(windowCtx.navigator, '__optimizerEMEHooked', { value: true, writable: false });
 
-                if (keySystem.indexOf("playready") !== -1) {
+            windowCtx.navigator.requestMediaKeySystemAccess = async function (keySystem, options) {
+                if (typeof keySystem === 'string' && keySystem.indexOf("playready") !== -1) {
                     try {
-                        return await windowCtx.navigator.requestMediaKeySystemAccessOriginal(newKeySystem, options);
-                    } catch(e) {
-                        console.warn("[Optimizer+] Fallback PlayReady SL2000 -> SL3000");
-                        newKeySystem = "com.microsoft.playready";
+                        return await original(keySystem, options);
+                    } catch (e) {
+                        console.warn("[Optimizer+] Fallback PlayReady hardware -> software");
+                        return await original("com.microsoft.playready", options);
                     }
                 }
-
-                // Modifier les options pour permettre plus de flexibilité
-                for (let i = 0; i < options.length; i++) {
-                    if (options[i].videoCapabilities) {
-                        for (let j = 0; j < options[i].videoCapabilities.length; j++) {
-                            // Permettre le décodage software si hardware non disponible
-                            if (options[i].videoCapabilities[j].robustness) {
-                                // On garde la robustness originale pour la sécurité
-                            }
-                        }
-                    }
-                }
-
-                return await windowCtx.navigator.requestMediaKeySystemAccessOriginal(newKeySystem, options);
+                return await original(keySystem, options);
             };
         }
 
-        console.log('[Optimizer+] Hooks DRM installés');
+        console.log('[Optimizer+] Hooks DRM install\u00E9s');
     }
 
-    // ===============================================================================
-    // UI INJECTION - Ajout de l'interface dans le menu Boosteroid (CRUCIAL)
-    // ===============================================================================
+    // UI INJECTION - Adds the panel to the Boosteroid menu
 
-    // Sélecteurs possibles pour le menu Boosteroid
-    const MENU_SELECTORS = [
-        '#menu',
-        '.menu',
-        '[class*="sidebar"]',
-        '[class*="settings"]',
-        '[class*="panel"]',
-        '[class*="menu"]',
-        '[class*="Menu"]',
-        '[class*="control"]',
-        '[class*="options"]',
-        '[class*="overlay"]',
-        '.bstr-menu',
-        '.game-menu',
-        '[data-menu]',
-        '[role="menu"]',
-        '[role="dialog"]',
-        '.modal-content',
-        '.settings-panel',
-        '.controls-panel'
-    ];
-
-    /**
-     * Masquer l'option "Image plus lumineuse" de Boosteroid
-     * Cette option interfère avec les filtres du script
-     */
+    // Hide Boosteroid's own "Brighter image" option: it conflicts with the script's filters
     function hideBoosteroidBrighterOption() {
-        // Cibler UNIQUEMENT les lignes avec un toggle/switch (pas les panneaux stats)
-        // L'option "Image plus lumineuse" est un .menu_switch_block avec un input checkbox
+        // Only rows that hold a toggle, not the stats panels
         const switchBlocks = document.querySelectorAll('.menu_switch_block');
 
         switchBlocks.forEach(block => {
-            // Vérifier que c'est bien un bloc avec un toggle (input checkbox)
             const hasToggle = block.querySelector('input[type="checkbox"], .switch, .toggle');
-            if (!hasToggle) return; // Ignorer les blocs sans toggle
+            if (!hasToggle) return;
 
-            // Ne pas toucher à notre propre section
-            if (block.closest('#optimizer-section')) return;
+            if (block.closest('.optimizer-injected')) return;
 
-            // Chercher le texte du label
             const text = block.textContent?.toLowerCase() || '';
 
-            // Mots-clés SPÉCIFIQUES à l'option "Image plus lumineuse" (multilingue)
+            // Label of the "Brighter image" option in each language
             const brighterKeywords = [
                 'brighter image', 'image plus lumineuse', 'helleres bild',
-                'imagen más brillante', 'immagine più luminosa', 'imagem mais brilhante',
-                'ярче изображение', 'jaśniejszy obraz', 'яскравіше зображення',
-                'daha parlak', 'světlejší obraz', 'fényesebb kép', 'imagine mai luminoasă'
+                'imagen m\u00E1s brillante', 'immagine pi\u00F9 luminosa', 'imagem mais brilhante',
+                '\u044F\u0440\u0447\u0435 \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435', 'ja\u015Bniejszy obraz', '\u044F\u0441\u043A\u0440\u0430\u0432\u0456\u0448\u0435 \u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u043D\u044F',
+                'daha parlak', 'sv\u011Btlej\u0161\u00ED obraz', 'f\u00E9nyesebb k\u00E9p', 'imagine mai luminoas\u0103'
             ];
 
             const isBrighterOption = brighterKeywords.some(kw => text.includes(kw.toLowerCase()));
@@ -5087,58 +5433,17 @@
                 block.style.display = 'none';
                 block.style.visibility = 'hidden';
                 block.style.pointerEvents = 'none';
-                console.log('[Optimizer+] Masqué: option "Image plus lumineuse" de Boosteroid');
+                console.log('[Optimizer+] Masqu\u00E9: option "Image plus lumineuse" de Boosteroid');
             }
         });
     }
 
-    /**
-     * Trouve le menu Boosteroid in-game (pas le menu dashboard!)
-     * Utilise findOpenOptionsMenu() pour la logique principale
-     * @returns {HTMLElement|null}
-     */
-    function findBoosteroidMenu() {
-        // Utiliser la nouvelle fonction de détection
-        const menu = findOpenOptionsMenu();
-        if (menu) return menu;
-
-        // Fallback: essayer les sélecteurs classiques
-        for (const selector of MENU_SELECTORS) {
-            try {
-                const elements = document.querySelectorAll(selector);
-                for (const el of elements) {
-                    // Vérifier si c'est un élément de menu valide (visible et avec du contenu)
-                    if (el && el.offsetParent !== null && el.children.length > 0) {
-                        // Vérifier que ce n'est pas notre propre élément
-                        if (!el.id?.includes('optimizer') && !el.className?.includes('optimizer')) {
-                            // Vérifier qu'on est bien dans un contexte de jeu
-                            if (isInGameSession()) {
-                                return el;
-                            }
-                        }
-                    }
-                }
-            } catch(e) {}
-        }
-
-        return null;
-    }
-
-    /**
-     * Trouve le meilleur endroit pour insérer notre section dans le menu
-     * Idéalement après la section "Streaming"
-     * @param {HTMLElement} menu - Le menu parent
-     * @returns {HTMLElement|null} L'élément après lequel insérer, ou null pour ajouter à la fin
-     */
     function findInsertionPoint(menu) {
-        // Chercher la section "Streaming" (dernier menu_block avant notre insertion)
         const menuBlocks = menu.querySelectorAll('.menu_block');
         if (menuBlocks.length > 0) {
-            // Retourner le dernier menu_block existant
             return menuBlocks[menuBlocks.length - 1];
         }
 
-        // Sinon chercher le dernier menu_title
         const menuTitles = menu.querySelectorAll('.menu_title');
         if (menuTitles.length > 0) {
             return menuTitles[menuTitles.length - 1];
@@ -5147,19 +5452,11 @@
         return null;
     }
 
-    // ===============================================================================
-    // DÉTECTION DE SESSION DE JEU - Logique robuste
-    // ===============================================================================
+    // GAME SESSION DETECTION
 
-    /**
-     * Vérifie si on est sur une page dashboard (où le script ne doit PAS s'activer)
-     * @returns {boolean} True si on est sur le dashboard
-     */
     function isDashboardPage() {
         const path = window.location.pathname.toLowerCase();
-        const href = window.location.href.toLowerCase();
 
-        // Pages de streaming = PAS dashboard (jeu actif)
         if (path.includes('streaming.html') || path.includes('/streaming/')) {
             return false;
         }
@@ -5174,7 +5471,6 @@
             '/support'
         ];
 
-        // Si on est à la racine ou sur une page dashboard connue
         if (path === '/' || path === '') {
             return true;
         }
@@ -5182,80 +5478,38 @@
         return dashboardPatterns.some(pattern => path.includes(pattern));
     }
 
-    /**
-     * Vérifie si on est sur la page de streaming (jeu actif)
-     * @returns {boolean} True si on est en streaming
-     */
     function isStreamingPage() {
         const path = window.location.pathname.toLowerCase();
         const href = window.location.href.toLowerCase();
 
-        // Détection de streaming.html avec sessionId
         if (path.includes('streaming.html') || href.includes('sessionid=')) {
             return true;
         }
 
-        // Autres patterns de jeu
         const gamePatterns = ['/play/', '/game/', '/stream/', '/session/', '/run/'];
         return gamePatterns.some(pattern => path.includes(pattern));
     }
 
-    /**
-     * Vérifie si une instance de jeu est active (streaming vidéo WebRTC)
-     * @returns {boolean} True si un jeu est en cours de streaming
-     */
-    function isInGameSession() {
-        // 1. Vérifier si on est sur la page de streaming
-        const onStreamingPage = isStreamingPage();
-
-        // 2. Vérifier la présence d'une vidéo de streaming active
-        const video = document.querySelector('video');
-        const hasActiveVideo = video && (
-            video.src ||
-            video.srcObject ||
-            video.readyState >= 1 // HAVE_METADATA ou plus
-        );
-
-        // 3. Vérifier la présence du menu Boosteroid (structure spécifique)
-        const hasBoosteroidMenu = document.querySelector('#menu.menu_desktop') ||
-                                  document.querySelector('.menu_switch_block') ||
-                                  document.querySelector('#close-session-control');
-
-        // 4. Vérifier qu'on n'est PAS sur le dashboard
-        const notOnDashboard = !isDashboardPage();
-
-        // Session active si: (page streaming OU vidéo active OU menu Boosteroid) ET pas dashboard
-        const isActive = notOnDashboard && (onStreamingPage || hasActiveVideo || hasBoosteroidMenu);
-
-        if (isActive !== SessionState.isGameActive) {
-            console.log(`[Optimizer+] Session de jeu: ${isActive ? 'ACTIVE' : 'INACTIVE'}`);
-            console.log(`[Optimizer+] - Page streaming: ${onStreamingPage}`);
-            console.log(`[Optimizer+] - Vidéo active: ${!!hasActiveVideo}`);
-            console.log(`[Optimizer+] - Menu Boosteroid: ${!!hasBoosteroidMenu}`);
-            SessionState.isGameActive = isActive;
+    // Returns the open Boosteroid options menu, or null. Desktop: #menu.menu_desktop, mobile: .m_lan_wrapper, both shown with display:block
+    function findOpenOptionsMenu() {
+        const mobileMenus = document.querySelectorAll('.m_lan_wrapper');
+        for (const mobileMenu of mobileMenus) {
+            const style = window.getComputedStyle(mobileMenu);
+            if (style.display !== 'none' && mobileMenu.offsetParent !== null) {
+                console.log('[Optimizer+] Menu Mobile Boosteroid trouvé (.m_lan_wrapper visible)');
+                return mobileMenu;
+            }
         }
 
-        return isActive;
-    }
-
-    /**
-     * Vérifie si le menu d'options de Boosteroid est ouvert
-     * Cible spécifiquement la structure: #menu.menu_desktop avec display:block
-     * @returns {HTMLElement|null} L'élément menu si trouvé et visible, null sinon
-     */
-    function findOpenOptionsMenu() {
-        // 1. Sélecteur EXACT du menu Boosteroid (priorité maximale)
         const boosteroidMenu = document.querySelector('#menu.menu_desktop');
         if (boosteroidMenu) {
             const style = window.getComputedStyle(boosteroidMenu);
-            // Vérifier que le menu est visible (display: block)
             if (style.display !== 'none' && boosteroidMenu.offsetParent !== null) {
                 console.log('[Optimizer+] Menu Boosteroid trouvé (#menu.menu_desktop)');
                 return boosteroidMenu;
             }
         }
 
-        // 2. Fallback: chercher par ID seul
         const menuById = document.getElementById('menu');
         if (menuById && menuById.classList.contains('menu_desktop')) {
             const style = window.getComputedStyle(menuById);
@@ -5264,13 +5518,13 @@
             }
         }
 
-        // 3. Fallback: chercher par structure (menu_title + menu_switch_block)
+        // Fallback: search by structure (menu_title inside a menu container)
         const menuTitles = document.querySelectorAll('.menu_title');
         for (const title of menuTitles) {
             let parent = title.parentElement;
-            // Remonter pour trouver le conteneur principal
             while (parent && parent !== document.body) {
-                if (parent.id === 'menu' || parent.classList.contains('menu_desktop')) {
+                if (parent.id === 'menu' || parent.classList.contains('menu_desktop') ||
+                    parent.classList.contains('m_lan_wrapper')) {
                     const style = window.getComputedStyle(parent);
                     if (style.display !== 'none' && parent.offsetParent !== null) {
                         return parent;
@@ -5283,16 +5537,11 @@
         return null;
     }
 
-    /**
-     * Nettoie tous les éléments UI du script et reset l'état
-     * Appelé quand on quitte une session de jeu ou ferme le menu
-     */
     function cleanupUI() {
-        // Éléments à supprimer
         const elementsToRemove = [
-            '#optimizer-section',
+            '.optimizer-injected',
             '#optimizer-notification',
-            '#optimizer-svg-filters',
+            '#optimizer-dashboard-widget',
             '.optimizer-overlay',
             '#opt-notification-style'
         ];
@@ -5302,29 +5551,24 @@
             elements.forEach(el => el.remove());
         });
 
-        // Retirer les filtres CSS appliqués aux vidéos (seulement si on quitte le jeu)
-        if (!SessionState.isGameActive) {
-            document.querySelectorAll('video').forEach(video => {
-                video.style.filter = '';
-            });
+        // Also detach the dashboard widget's document handlers
+        if (typeof detachWidgetEvents === 'function') {
+            try { detachWidgetEvents(); } catch (_) { }
         }
 
-        // Mettre à jour l'état
+        // WebGPU: stop render loop when leaving game
+        if (!SessionState.isGameActive && typeof videoEnhancer !== 'undefined') {
+            videoEnhancer.removeFiltersFromAllVideos();
+        }
+
         SessionState.isUIInjected = false;
 
-        console.log('[Optimizer+] UI nettoyée');
+        console.log('[Optimizer+] UI nettoy\u00E9e');
     }
 
-    /**
-     * Système d'injection intelligent de l'UI
-     * Ne s'active QUE si:
-     * 1. On est en session de jeu (page streaming, pas dashboard)
-     * 2. Le menu d'options est ouvert (visible)
-     */
+    // Injects the UI only during a game session and while the options menu is open
     function injectUI() {
-        // ===========================================================================
-        // VÉRIFICATION INITIALE
-        // ===========================================================================
+        // INITIAL CHECK
 
         const onStreaming = isStreamingPage();
         console.log('[Optimizer+] Page de streaming:', onStreaming);
@@ -5335,177 +5579,185 @@
             return;
         }
 
-        // ===========================================================================
-        // OBSERVER PRINCIPAL - Surveille l'état du jeu et du menu
-        // ===========================================================================
+// MAIN OBSERVER - Tracks game and menu state
 
-        let checkInterval = null;
         let lastUrl = window.location.href;
-        let isInjecting = false; // v3.6.4: Mutex pour éviter double injection (RACE-01)
+        let isInjecting = false; // Mutex against double injection
+        let _lastCheckTime = 0; // Throttle: keeps this off the main thread during play
+        let throttleTimer = null;
 
-        /**
-         * Fonction principale de vérification et injection
-         */
+        // Style/class changes are observed on the menu containers only, so in-game DOM
+        // churn (cursor, overlays) never reaches a script callback.
+        const watchedMenus = new WeakSet();
+        const menuObserver = new MutationObserver(() => setTimeout(checkAndInject, 50));
+        const watchMenus = () => {
+            document.querySelectorAll('#menu, .m_lan_wrapper').forEach((el) => {
+                if (watchedMenus.has(el)) return;
+                watchedMenus.add(el);
+                menuObserver.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+            });
+        };
+
         const checkAndInject = () => {
-            // v3.6.4: Mutex - éviter les appels concurrents (RACE-01 fix)
+            const now = Date.now();
+            const timeSinceLast = now - _lastCheckTime;
+
+            if (timeSinceLast < 500) {
+                // Throttled: schedule one check at the end of the window
+                if (throttleTimer) clearTimeout(throttleTimer);
+                throttleTimer = setTimeout(() => {
+                    throttleTimer = null;
+                    checkAndInject();
+                }, 500 - timeSinceLast);
+                return;
+            }
+
+            _lastCheckTime = now;
+            if (throttleTimer) {
+                clearTimeout(throttleTimer);
+                throttleTimer = null;
+            }
+
+            watchMenus();
             if (isInjecting) return;
             isInjecting = true;
 
             try {
-            // 0. Auto-réparation en cas d'état incohérent
-            SessionState.selfHeal();
+                SessionState.selfHeal();
 
-            // 1. Vérifier si on est sur une page de streaming
-            const onStreaming = isStreamingPage();
+                const onStreaming = isStreamingPage();
 
-            if (!onStreaming && isDashboardPage()) {
-                // Pas en jeu -> nettoyer si nécessaire
-                if (SessionState.isUIInjected) {
-                    cleanupUI();
+                if (!onStreaming && isDashboardPage()) {
+                    if (SessionState.isUIInjected) {
+                        cleanupUI();
+                    }
+                    return;
                 }
-                return;
-            }
 
-            // ===========================================================================
-            // STREAMING ENHANCEMENTS: Activer dès la page streaming (avant le menu)
-            // ===========================================================================
-            if (onStreaming && !StreamingEnhancements.active) {
-                StreamingEnhancements.enable();
-            }
+                // Streaming enhancements start with the streaming page, before the menu exists
+                if (onStreaming && !StreamingEnhancements.active) {
+                    StreamingEnhancements.enable();
+                }
 
-            // 2. Chercher le menu Boosteroid (#menu.menu_desktop)
-            const menu = findOpenOptionsMenu();
+                const menu = findOpenOptionsMenu();
 
-            if (menu && !SessionState.isUIInjected) {
-                // Menu trouvé et UI pas encore injectée -> injecter
-                if (!document.getElementById('optimizer-section')) {
-                    createOptimizerUI(menu);
-                    hideBoosteroidBrighterOption(); // Masquer l'option conflictuelle
+                if (menu && !SessionState.isUIInjected) {
+                    if (!isUIFullyInjected(menu)) {
+                        if (document.querySelector('.optimizer-injected')) {
+                            cleanupUI();
+                        }
+                        createOptimizerUI(menu);
+                        hideBoosteroidBrighterOption();
+                        SessionState.isUIInjected = true;
+                        SessionState.isMenuOpen = true;
+                        SessionState.isGameActive = true;
+                        SessionState.retryCount = 0;
+                        console.log('[Optimizer+] [OK] UI injectée dans le menu Boosteroid');
+                    }
+                } else if (menu && SessionState.isUIInjected) {
+                    // Boosteroid may have partially destroyed the UI
+                    if (!isUIFullyInjected(menu)) {
+                        console.log('[Optimizer+] UI partiellement détruite détectée lors du check, réinjection...');
+                        cleanupUI();
+                        createOptimizerUI(menu);
+                    }
+                    hideBoosteroidBrighterOption();
                     SessionState.isUIInjected = true;
                     SessionState.isMenuOpen = true;
-                    SessionState.isGameActive = true;
-                    SessionState.retryCount = 0; // Reset le compteur après succès
-                    console.log('[Optimizer+] [OK] UI injectée dans le menu Boosteroid');
+                    SessionState.retryCount = 0;
+                } else if (!menu && SessionState.isUIInjected) {
+                    // Menu closed: clean up to avoid orphans
+                    cleanupUI();
+                    SessionState.isMenuOpen = false;
                 }
-            } else if (menu && document.getElementById('optimizer-section')) {
-                // Menu ouvert et UI présente - tout va bien
-                hideBoosteroidBrighterOption(); // S'assurer que l'option reste masquée
-                SessionState.isUIInjected = true;
-                SessionState.isMenuOpen = true;
-                SessionState.retryCount = 0;
-            } else if (!menu && SessionState.isUIInjected) {
-                // Menu fermé - l'UI disparaît avec le menu (pas besoin de cleanup)
-                // Le menu Boosteroid cache notre UI quand il se ferme
-                SessionState.isMenuOpen = false;
-                // L'UI sera recréée quand le menu s'ouvrira à nouveau
-                if (!document.getElementById('optimizer-section')) {
-                    SessionState.isUIInjected = false;
-                }
-            }
             } finally {
-                isInjecting = false; // v3.6.4: Libérer le mutex
+                isInjecting = false;
             }
         };
 
-        /**
-         * Gère les changements d'URL (navigation SPA)
-         */
         const handleUrlChange = () => {
             if (window.location.href !== lastUrl) {
-                const previousUrl = lastUrl;
                 lastUrl = window.location.href;
-                console.log('[Optimizer+] Navigation détectée:', window.location.pathname);
+                console.log('[Optimizer+] Navigation d\u00E9tect\u00E9e:', window.location.pathname);
 
-                // Vérifier si c'est un changement de session (nouveau jeu)
                 if (SessionState.hasSessionChanged()) {
-                    console.log('[Optimizer+] Nouveau jeu détecté - réinitialisation');
+                    console.log('[Optimizer+] Nouveau jeu d\u00E9tect\u00E9 - r\u00E9initialisation');
                     SessionState.forceReinject();
                     setTimeout(checkAndInject, 500);
                     return;
                 }
 
-                // Si on retourne au dashboard, nettoyer
                 if (isDashboardPage()) {
                     cleanupUI();
                     SessionState.reset();
                 } else {
-                    // Nouvelle page de jeu potentielle, vérifier
                     setTimeout(checkAndInject, 500);
                 }
             }
         };
 
-        // ===========================================================================
-        // MISE EN PLACE DES OBSERVERS
-        // ===========================================================================
+        // OBSERVERS
 
-        // Observer les mutations DOM (apparition de menus, vidéos, etc.)
         const domObserver = new MutationObserver((mutations) => {
-            // Vérifier les changements d'URL (SPA)
             handleUrlChange();
 
-            // Vérifier si des éléments pertinents ont été ajoutés ou modifiés
             let shouldCheck = false;
-            for (const mutation of mutations) {
-                // Vérifier les attributs (display:block sur le menu)
-                if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
-                    const target = mutation.target;
-                    if (target.id === 'menu' || target.classList?.contains('menu_desktop')) {
-                        shouldCheck = true;
-                        break;
-                    }
-                }
-
-                // Vérifier les nouveaux nœuds
-                for (const node of mutation.addedNodes) {
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        // Vérifier si c'est le menu ou un élément de menu
-                        if (node.id === 'menu' ||
-                            node.classList?.contains('menu_desktop') ||
-                            node.classList?.contains('menu_block') ||
-                            node.matches?.('video, .menu_title, .menu_switch_block')) {
-                            shouldCheck = true;
-                            break;
+            const len = mutations.length;
+            for (let i = 0; i < len; i++) {
+                const mutation = mutations[i];
+                if (mutation.type === 'childList') {
+                    const added = mutation.addedNodes;
+                    const addedLen = added.length;
+                    for (let j = 0; j < addedLen; j++) {
+                        const node = added[j];
+                        if (node.nodeType === 1) { // Node.ELEMENT_NODE
+                            const id = node.id;
+                            const classList = node.classList;
+                            const name = node.nodeName;
+                            if (id === 'menu' ||
+                                name === 'VIDEO' ||
+                                (classList && (
+                                    classList.contains('menu_desktop') ||
+                                    classList.contains('menu_block') ||
+                                    classList.contains('m_lan_wrapper') ||
+                                    classList.contains('menu_title') ||
+                                    classList.contains('menu_switch_block')
+                                ))) {
+                                shouldCheck = true;
+                                break;
+                            }
                         }
-                        // Vérifier les enfants
-                        if (node.querySelector?.('#menu, .menu_desktop, .menu_block')) {
-                            shouldCheck = true;
-                            break;
-                        }
                     }
+                    if (shouldCheck) break;
                 }
-                if (shouldCheck) break;
             }
 
             if (shouldCheck) {
-                // Petit délai pour laisser le DOM se stabiliser
+                // Let the DOM settle
                 setTimeout(checkAndInject, 50);
             }
         });
 
         domObserver.observe(document.body, {
             childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['style', 'class', 'display']
+            subtree: true
         });
 
-        // Écouter les clics (ouverture de menus)
+        // Clicks and taps may open the menu
         const clickHandler = () => {
+            if (document.pointerLockElement) return; // in-game click: the menu cannot open
             setTimeout(checkAndInject, 300);
         };
         document.addEventListener('click', clickHandler, { passive: true });
+        document.addEventListener('touchend', clickHandler, { passive: true });
 
-        // Écouter les touches clavier (ESC pour fermer menu)
         const keyHandler = (e) => {
             if (e.key === 'Escape') {
                 setTimeout(checkAndInject, 100);
             }
-            // Note: Raccourci ultrawide (Ctrl+Alt+W / F10) supprimé en v3.6.9
         };
         document.addEventListener('keydown', keyHandler);
 
-        // Écouter popstate pour la navigation
         const popstateHandler = () => {
             setTimeout(() => {
                 handleUrlChange();
@@ -5514,11 +5766,13 @@
         };
         window.addEventListener('popstate', popstateHandler);
 
-        // Écouter le changement de visibilité de l'onglet (retour après alt-tab, etc.)
+        // Tab visible again (alt-tab): make sure the renderer is running
         const visibilityHandler = () => {
             if (document.visibilityState === 'visible' && isStreamingPage()) {
-                console.log('[Optimizer+] Onglet redevenu visible - vérification UI');
-                // Laisser le temps au DOM de se rétablir après la reprise
+                console.log('[Optimizer+] Onglet redevenu visible - réactivation et vérification des filtres');
+                if (typeof videoEnhancer !== 'undefined' && videoEnhancer.ensureActive) {
+                    videoEnhancer.ensureActive();
+                }
                 setTimeout(() => {
                     SessionState.selfHeal();
                     checkAndInject();
@@ -5527,60 +5781,56 @@
         };
         document.addEventListener('visibilitychange', visibilityHandler);
 
-        // Écouter le focus de la fenêtre (en plus de visibility pour compatibilité)
         const focusHandler = () => {
             if (isStreamingPage()) {
+                if (typeof videoEnhancer !== 'undefined' && videoEnhancer.ensureActive) {
+                    videoEnhancer.ensureActive();
+                }
                 setTimeout(checkAndInject, 200);
             }
         };
         window.addEventListener('focus', focusHandler);
 
-        // v3.6.2: Remplacé setInterval par requestIdleCallback (évite micro-freezes)
+        const fullscreenHandler = () => {
+            console.log('[Optimizer+] Changement de plein écran détecté');
+            setTimeout(checkAndInject, 200);
+            setTimeout(checkAndInject, 800);
+        };
+        document.addEventListener('fullscreenchange', fullscreenHandler);
+
+        const resizeHandler = () => {
+            setTimeout(checkAndInject, 200);
+            setTimeout(checkAndInject, 800);
+        };
+        window.addEventListener('resize', resizeHandler);
+
+        // isStreamingPage() is re-read every iteration: it changes on dashboard/game navigation
+        // Poll rarely once the UI is injected: the observers handle detection
         const scheduleNextCheck = () => {
-            if (typeof requestIdleCallback !== 'undefined') {
-                checkInterval = requestIdleCallback(() => {
-                    if (isStreamingPage()) checkAndInject();
-                    scheduleNextCheck();
-                }, { timeout: onStreaming ? 2000 : 5000 });
-            } else {
-                // Fallback pour navigateurs sans requestIdleCallback
-                checkInterval = setTimeout(() => {
-                    if (isStreamingPage()) checkAndInject();
-                    scheduleNextCheck();
-                }, onStreaming ? 2000 : 5000);
-            }
+            const streamingNow = isStreamingPage();
+            const delay = streamingNow
+                ? (SessionState.isUIInjected ? 10000 : 2000)
+                : 5000;
+            setTimeout(() => {
+                if (isStreamingPage()) checkAndInject();
+                scheduleNextCheck();
+            }, delay);
         };
         scheduleNextCheck();
 
-        // Stocker les handlers pour cleanup potentiel
-        SessionState.cleanupHandlers = [
-            () => domObserver.disconnect(),
-            () => document.removeEventListener('click', clickHandler),
-            () => document.removeEventListener('keydown', keyHandler),
-            () => window.removeEventListener('popstate', popstateHandler),
-            () => document.removeEventListener('visibilitychange', visibilityHandler),
-            () => window.removeEventListener('focus', focusHandler),
-            () => { if (typeof cancelIdleCallback !== 'undefined') cancelIdleCallback(checkInterval); else clearTimeout(checkInterval); }
-        ];
+        // These observers and listeners intentionally live for the whole page lifetime
 
-        // Première vérification - immédiate sur streaming.html
         if (onStreaming) {
-            console.log('[Optimizer+] Page streaming détectée - activation immédiate');
-            // Vérifier plusieurs fois rapidement au début
-            setTimeout(checkAndInject, 100);
-            setTimeout(checkAndInject, 500);
-            setTimeout(checkAndInject, 1000);
-            setTimeout(checkAndInject, 2000);
+            console.log('[Optimizer+] Page streaming d\u00E9tect\u00E9e - activation imm\u00E9diate');
+            [100, 500, 1000, 2000].forEach(delay => setTimeout(checkAndInject, delay));
         } else {
             setTimeout(checkAndInject, 500);
         }
 
-        console.log('[Optimizer+] Système d\'injection intelligent activé');
+        console.log('[Optimizer+] Syst\u00E8me d\'injection intelligent activ\u00E9');
     }
 
-    // Notification stylée
     function showNotification(message, type = 'info') {
-        // Supprimer notification existante
         const existing = document.getElementById('optimizer-notification');
         if (existing) existing.remove();
 
@@ -5599,10 +5849,14 @@
             info: '#00a3ff'
         };
 
-        notification.innerHTML = `
-            <span style="display: flex; align-items: center; color: ${colors[type]};">${icons[type] || icons.info}</span>
-            <span>${message}</span>
-        `;
+        // message goes into a text node, never innerHTML (XSS)
+        const iconSpan = document.createElement('span');
+        iconSpan.style.cssText = `display: flex; align-items: center; color: ${colors[type] || colors.info};`;
+        iconSpan.innerHTML = icons[type] || icons.info; // hard-coded SVG, safe
+        const textSpan = document.createElement('span');
+        textSpan.textContent = message;
+        notification.appendChild(iconSpan);
+        notification.appendChild(textSpan);
 
         notification.style.cssText = `
             position: fixed;
@@ -5624,7 +5878,6 @@
             animation: opt-slide-up 0.3s ease;
         `;
 
-        // Ajouter animation CSS
         if (!document.getElementById('opt-notification-style')) {
             const style = document.createElement('style');
             style.id = 'opt-notification-style';
@@ -5647,32 +5900,39 @@
         }, 3000);
     }
 
+    function isUIFullyInjected(menuElement) {
+        const root = menuElement || document;
+        return root.querySelector('#optimizer-reset') !== null &&
+               root.querySelector('#optimizer-res-select') !== null &&
+               root.querySelector('#optimizer-enhancer') !== null &&
+               root.querySelector('#optimizer-filters-toggle') !== null;
+    }
+
     function createOptimizerUI(menuElement) {
-        // Vérifier si déjà injecté
-        if (document.getElementById('optimizer-section')) {
-            console.log('[Optimizer+] UI déjà présente');
+        if (isUIFullyInjected(menuElement)) {
+            console.log('[Optimizer+] UI déjà présente et complète');
             return;
         }
 
-        // Activer les améliorations de streaming (AXE 2)
+        if (document.querySelector('.optimizer-injected')) {
+            console.log('[Optimizer+] UI incomplète détectée, nettoyage avant réinjection');
+            cleanupUI();
+        }
+
         if (!StreamingEnhancements.active) {
             StreamingEnhancements.enable();
         }
 
-        // Trouver le meilleur point d'insertion (après la dernière section)
         const insertAfter = findInsertionPoint(menuElement);
 
-        // Créer la section Optimizer Plus - Structure native Boosteroid
-        const section = document.createElement('div');
-        section.id = 'optimizer-section';
+        const sectionScreenAnalysis = SmartResolutionDetector.getScreenAnalysis();
 
-        // Déterminer si on est sur un écran ultrawide
-        const isUltrawideScreen = (window.innerWidth / window.innerHeight) > 1.9;
-
-        section.innerHTML = `
-            <div class="menu_title" style="margin-top: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
-                <span>${t('title')} <span class="optimizer-badge">v3.7.2</span> <span style="font-size: 11px; color: #9b99ad; font-weight: normal;">by Derfog</span></span>
-                <select class="optimizer-select" id="optimizer-lang-select" style="width: auto; min-width: 80px; padding: 4px 6px; font-size: 11px;">
+        const temp = document.createElement('div');
+        temp.innerHTML = `
+            <!-- HEADER: Boosteroid Optimizer Plus -->
+            <div class="menu_title optimizer-injected" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+                <span>Boosteroid Optimizer Plus <span class="optimizer-badge">v${SCRIPT_VERSION}</span> <span style="font-size: 11px; color: #9b99ad; font-weight: normal;">by Derfog</span></span>
+                <select class="optimizer-select" id="optimizer-lang-select" style="width: auto; min-width: 65px; max-width: 90px; padding: 4px 6px; font-size: 11px; flex-shrink: 0;">
                     <option value="auto" ${CONFIG.language === 'auto' ? 'selected' : ''}>Auto</option>
                     <option value="en" ${CONFIG.language === 'en' ? 'selected' : ''}>EN</option>
                     <option value="fr" ${CONFIG.language === 'fr' ? 'selected' : ''}>FR</option>
@@ -5692,162 +5952,244 @@
                 </select>
             </div>
 
-            <!-- Status compact -->
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group">
-                    <div class="optimizer-status-dot" id="optimizer-status-dot"></div>
-                    <span style="margin-left: 6px;">${t('active')} - <span id="optimizer-resolution">${CONFIG.resolution.width}x${CONFIG.resolution.height}</span></span>
-                </div>
-                <span class="optimizer-hw-badge">${ICONS.cpu}</span>
-            </div>
-
-            <!-- Info écran détecté -->
-            <div class="optimizer-screen-info">
-                ${ICONS.monitor}
-                <span class="screen-detected">${SmartResolutionDetector.getScreenAnalysis().screen.width}x${SmartResolutionDetector.getScreenAnalysis().screen.height}</span>
-                <span class="screen-ratio">${SmartResolutionDetector.getScreenAnalysis().screen.ratioType}</span>
-            </div>
-
-            <!-- Sélecteur de Résolution v3.6.3 - Auto-détection intelligente -->
-            <div class="menu_title">${t('targetResolution')}</div>
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group">
-                    ${ICONS.monitor} <span>${t('resolution')}</span>
-                </div>
-                <select class="optimizer-select" id="optimizer-res-select">
-                    ${SmartResolutionDetector.generateResolutionOptionsHTML(CONFIG.resolution.width, CONFIG.resolution.height, CONFIG.resolution.isAuto)}
-                </select>
-            </div>
-
-            <!-- Video Enhancer - Simplifié -->
-            <div class="menu_title">${t('videoEnhancement')}</div>
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group">
-                    <p>${t('enableEnhancer')}</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="optimizer-enhancer" ${CONFIG.enhancer.enabled ? 'checked' : ''}>
-                    <span class="slider round"></span>
-                </label>
-            </div>
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group"><p>${t('sharpness')}</p></div>
-                <div class="menu_title_group" id="optimizer-sharp-value">${Math.round(CONFIG.enhancer.sharpness * 100)}%</div>
-                <input type="range" id="optimizer-sharpness" name="sharpness" min="0" max="100" value="${CONFIG.enhancer.sharpness * 100}">
-            </div>
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group"><p>${t('contrast')}</p></div>
-                <div class="menu_title_group" id="optimizer-contrast-value">${Math.round(CONFIG.enhancer.contrast * 100)}%</div>
-                <input type="range" id="optimizer-contrast" name="contrast" min="80" max="120" value="${CONFIG.enhancer.contrast * 100}">
-            </div>
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group"><p>${t('saturation')}</p></div>
-                <div class="menu_title_group" id="optimizer-sat-value">${Math.round(CONFIG.enhancer.saturation * 100)}%</div>
-                <input type="range" id="optimizer-saturation" name="saturation" min="80" max="120" value="${CONFIG.enhancer.saturation * 100}">
-            </div>
-
-            <!-- PRÉSETS - Section principale simplifiée -->
-            <div class="menu_title">${t('quickPresets')}</div>
-            <div class="menu_switch_block top_20" style="flex-direction: column; align-items: flex-start;">
-                <div class="optimizer-presets" id="optimizer-presets">
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'perfect' ? 'active' : ''}" data-preset="perfect">${ICONS.sparkles} Perfect</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'default' ? 'active' : ''}" data-preset="default">${ICONS.target} ${t('presetDefault')}</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'cinematic' ? 'active' : ''}" data-preset="cinematic">${ICONS.film} ${t('presetCinematic')}</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'game' ? 'active' : ''}" data-preset="game">${ICONS.crosshair} ${t('presetGame')}</button>
-                    <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'comfort' ? 'active' : ''}" data-preset="comfort">${ICONS.eye} ${t('presetComfort')}</button>
-                </div>
-            </div>
-
-            <!-- Toggle filtres avancés (collapsed par défaut) -->
-            <div class="menu_switch_block top_20">
-                <div class="menu_title_group">
-                    <p>${t('advancedFilters')}</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="optimizer-filters-toggle" ${CONFIG.filters.enabled ? 'checked' : ''}>
-                    <span class="slider round"></span>
-                </label>
-            </div>
-
-            <!-- Filtres détaillés - cachés par défaut, affichés si toggle activé -->
-            <div id="optimizer-filters-details" style="display: ${CONFIG.filters.enabled ? 'block' : 'none'};">
-                <!-- USM Filter -->
+            <!-- SECTION 1: RESOLUTION -->
+            <div class="menu_title optimizer-injected">${escapeHtml(t('targetResolution'))}</div>
+            <div class="menu_block optimizer-injected">
+                <!-- Status compact -->
                 <div class="menu_switch_block top_20">
                     <div class="menu_title_group">
-                        <p>USM</p>
+                        <div class="optimizer-status-dot" id="optimizer-status-dot"></div>
+                        <span style="margin-left: 6px;">${escapeHtml(t('active'))} - <span id="optimizer-resolution">${escapeHtml(CONFIG.resolution.width)}x${escapeHtml(CONFIG.resolution.height)}</span></span>
                     </div>
-                    <label class="switch">
-                        <input type="checkbox" class="optimizer-filter-checkbox" data-filter="usm" ${CONFIG.filters.usm.enabled ? 'checked' : ''}>
+                    <span class="optimizer-hw-badge">${ICONS.cpu}</span>
+                </div>
+
+                <div class="optimizer-screen-info">
+                    ${ICONS.monitor}
+                    <span class="screen-detected">${escapeHtml(sectionScreenAnalysis.screen.width)}x${escapeHtml(sectionScreenAnalysis.screen.height)}</span>
+                    <span class="screen-ratio">${escapeHtml(sectionScreenAnalysis.screen.ratioType)}</span>
+                </div>
+
+                <div class="menu_switch_block top_20">
+                    <div class="menu_title_group">
+                        ${ICONS.monitor} <span>${escapeHtml(t('resolution'))}</span>
+                    </div>
+                    <select class="optimizer-select" id="optimizer-res-select">
+                        ${SmartResolutionDetector.generateResolutionOptionsHTML(CONFIG.resolution.width, CONFIG.resolution.height, CONFIG.resolution.isAuto)}
+                    </select>
+                </div>
+            </div>
+
+            <!-- SECTION 2: VIDEO ENHANCEMENT -->
+            <div class="menu_title optimizer-injected">${escapeHtml(t('videoEnhancement'))}</div>
+            <div class="menu_block optimizer-injected">
+                <div class="menu_switch_block top_20">
+                    <div class="menu_title_group">
+                        <p>${escapeHtml(t('enableEnhancer'))}</p>
+                    </div>
+                    <label class="switch toggle-switch">
+                        <input type="checkbox" id="optimizer-enhancer" ${CONFIG.enhancer.enabled ? 'checked' : ''}>
                         <span class="slider round"></span>
                     </label>
                 </div>
                 <div class="menu_switch_block top_20">
-                    <div class="menu_title_group" id="usm-title">${Math.round(CONFIG.filters.usm.amount * 100)}%</div>
-                    <input type="range" id="usm-amount" name="usm-amount" min="0" max="100" value="${CONFIG.filters.usm.amount * 100}">
+                    <div class="menu_title_group"><p>${escapeHtml(t('sharpness'))}</p></div>
+                    <div class="menu_title_group" id="optimizer-sharp-value">${Math.round(CONFIG.enhancer.sharpness * 100)}%</div>
+                    <input type="range" id="optimizer-sharpness" name="sharpness" min="0" max="100" value="${CONFIG.enhancer.sharpness * 100}">
                 </div>
+                <div class="menu_switch_block top_20">
+                    <div class="menu_title_group"><p>${escapeHtml(t('contrast'))}</p></div>
+                    <div class="menu_title_group" id="optimizer-contrast-value">${Math.round(CONFIG.enhancer.contrast * 100)}%</div>
+                    <input type="range" id="optimizer-contrast" name="contrast" min="80" max="120" value="${CONFIG.enhancer.contrast * 100}">
+                </div>
+                <div class="menu_switch_block top_20">
+                    <div class="menu_title_group"><p>${escapeHtml(t('saturation'))}</p></div>
+                    <div class="menu_title_group" id="optimizer-sat-value">${Math.round(CONFIG.enhancer.saturation * 100)}%</div>
+                    <input type="range" id="optimizer-saturation" name="saturation" min="80" max="120" value="${CONFIG.enhancer.saturation * 100}">
+                </div>
+            </div>
 
-                <!-- CAS Filter -->
+            <!-- SECTION 3: QUICK PRESETS -->
+            <div class="menu_title optimizer-injected">${escapeHtml(t('quickPresets'))}</div>
+            <div class="menu_block optimizer-injected">
+                <div class="menu_switch_block top_20" style="flex-direction: column; align-items: flex-start; padding: 4px 0;">
+                    <div class="optimizer-presets" id="optimizer-presets">
+                        <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'perfect' ? 'active' : ''}" data-preset="perfect">${ICONS.sparkles} Perfect</button>
+                        <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'default' ? 'active' : ''}" data-preset="default">${ICONS.target} ${escapeHtml(t('presetDefault'))}</button>
+                        <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'cinematic' ? 'active' : ''}" data-preset="cinematic">${ICONS.film} ${escapeHtml(t('presetCinematic'))}</button>
+                        <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'game' ? 'active' : ''}" data-preset="game">${ICONS.crosshair} ${escapeHtml(t('presetGame'))}</button>
+                        <button class="optimizer-preset-btn ${CONFIG.filters.preset === 'comfort' ? 'active' : ''}" data-preset="comfort">${ICONS.eye} ${escapeHtml(t('presetComfort'))}</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SECTION 4: ADVANCED FILTERS -->
+            <div class="menu_title optimizer-injected">${escapeHtml(t('advancedFilters'))}</div>
+            <div class="menu_block optimizer-injected">
                 <div class="menu_switch_block top_20">
                     <div class="menu_title_group">
-                        <p>CAS</p>
+                        <p>${escapeHtml(t('enableAdvanced') || 'Activer filtres avancés')}</p>
                     </div>
-                    <label class="switch">
-                        <input type="checkbox" class="optimizer-filter-checkbox" data-filter="cas" ${CONFIG.filters.cas.enabled ? 'checked' : ''}>
+                    <label class="switch toggle-switch">
+                        <input type="checkbox" id="optimizer-filters-toggle" ${CONFIG.filters.enabled ? 'checked' : ''}>
                         <span class="slider round"></span>
                     </label>
                 </div>
+
+                <!-- Performance Mode Toggle -->
                 <div class="menu_switch_block top_20">
-                    <div class="menu_title_group" id="cas-title">${Math.round(CONFIG.filters.cas.sharpness * 100)}%</div>
-                    <input type="range" id="cas-sharpness" name="cas-sharpness" min="0" max="100" value="${CONFIG.filters.cas.sharpness * 100}">
+                    <div class="menu_title_group">
+                        <p>${escapeHtml(t('performanceMode') || 'Mode Performance')}</p>
+                        <span class="menu_setting_info" title="${escapeHtml(t('performanceModeDesc') || 'Filtres optimisés pour FPS max (désactive deband lourd et clarity)')}">ⓘ</span>
+                    </div>
+                    <label class="switch toggle-switch">
+                        <input type="checkbox" id="optimizer-filters-performance-toggle" ${CONFIG.filters.performanceMode ? 'checked' : ''}>
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+
+                <div id="optimizer-filters-details" style="display: ${CONFIG.filters.enabled ? 'block' : 'none'};">
+                    <!-- USM Filter -->
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group">
+                            <p>USM</p>
+                        </div>
+                        <label class="switch toggle-switch">
+                            <input type="checkbox" class="optimizer-filter-checkbox" data-filter="usm" ${CONFIG.filters.usm.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group" id="usm-title">${Math.round(CONFIG.filters.usm.amount * 100)}%</div>
+                        <input type="range" id="usm-amount" name="usm-amount" min="0" max="100" value="${CONFIG.filters.usm.amount * 100}">
+                    </div>
+
+                    <!-- CAS Filter -->
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group">
+                            <p>CAS</p>
+                        </div>
+                        <label class="switch toggle-switch">
+                            <input type="checkbox" class="optimizer-filter-checkbox" data-filter="cas" ${CONFIG.filters.cas.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group" id="cas-title">${Math.round(CONFIG.filters.cas.sharpness * 100)}%</div>
+                        <input type="range" id="cas-sharpness" name="cas-sharpness" min="0" max="100" value="${CONFIG.filters.cas.sharpness * 100}">
+                    </div>
+
+                    <!-- Clarity Filter -->
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group">
+                            <p>${escapeHtml(t('clarity') || 'Clarity')}</p>
+                        </div>
+                        <label class="switch toggle-switch">
+                            <input type="checkbox" class="optimizer-filter-checkbox" data-filter="clarity" ${CONFIG.filters.clarity.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group" id="clarity-title">${Math.round(CONFIG.filters.clarity.amount * 100)}%</div>
+                        <input type="range" id="clarity-amount" name="clarity-amount" min="0" max="100" value="${CONFIG.filters.clarity.amount * 100}">
+                    </div>
+
+                    <!-- Denoise Filter -->
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group">
+                            <p>${escapeHtml(t('denoise') || 'Denoise')}</p>
+                        </div>
+                        <label class="switch toggle-switch">
+                            <input type="checkbox" class="optimizer-filter-checkbox" data-filter="denoise" ${CONFIG.filters.denoise.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group" id="denoise-title">${Math.round(CONFIG.filters.denoise.strength * 100)}%</div>
+                        <input type="range" id="denoise-strength" name="denoise-strength" min="0" max="100" value="${CONFIG.filters.denoise.strength * 100}">
+                    </div>
+
+                    <!-- Vibrance Filter -->
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group">
+                            <p>${escapeHtml(t('vibrance') || 'Vibrance')}</p>
+                        </div>
+                        <label class="switch toggle-switch">
+                            <input type="checkbox" class="optimizer-filter-checkbox" data-filter="vibrance" ${CONFIG.filters.vibrance.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group" id="vibrance-title">${Math.round(CONFIG.filters.vibrance.amount * 100)}%</div>
+                        <input type="range" id="vibrance-amount" name="vibrance-amount" min="0" max="100" value="${CONFIG.filters.vibrance.amount * 100}">
+                    </div>
+
+                    <!-- Deband Filter -->
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group">
+                            <p>${escapeHtml(t('deband') || 'Deband')}</p>
+                        </div>
+                        <label class="switch toggle-switch">
+                            <input type="checkbox" class="optimizer-filter-checkbox" data-filter="deband" ${CONFIG.filters.deband.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="menu_switch_block top_20">
+                        <div class="menu_title_group" id="deband-title">${Math.round(CONFIG.filters.deband.strength * 100)}%</div>
+                        <input type="range" id="deband-strength" name="deband-strength" min="0" max="100" value="${CONFIG.filters.deband.strength * 100}">
+                    </div>
                 </div>
             </div>
 
-            <!-- Mode Performance -->
-            <div class="menu_switch_block top_20" style="margin-top: 15px;">
-                <div class="menu_title_group">
-                    ${ICONS.zap} <span style="margin-left: 4px;">${t('performanceMode') || 'Performance'}</span>
+            <!-- SECTION 5: OPTIONS -->
+            <div class="menu_title optimizer-injected">${escapeHtml(t('options') || 'Options')}</div>
+            <div class="menu_block optimizer-injected">
+                <!-- Stretch Mode (No Borders) -->
+                <div class="menu_switch_block top_20" style="margin-top: 15px;">
+                    <div class="menu_title_group">
+                        ${ICONS.monitor} <span style="margin-left: 4px;">${escapeHtml(t('stretchMode'))}</span>
+                    </div>
+                    <label class="switch toggle-switch">
+                        <input type="checkbox" id="optimizer-stretch-mode">
+                        <span class="slider round"></span>
+                    </label>
                 </div>
-                <label class="switch">
-                    <input type="checkbox" id="optimizer-performance-mode" ${CONFIG.display?.performanceMode ? 'checked' : ''}>
-                    <span class="slider round"></span>
-                </label>
-            </div>
 
-            <!-- Reset -->
-            <div class="menu_switch_block top_20" style="margin-top: 15px;">
-                <button class="optimizer-btn secondary" id="optimizer-reset" style="width: 100%;">
-                    ${ICONS.refresh} ${t('reset')}
-                </button>
+                <!-- Reset Button -->
+                <div class="menu_switch_block top_20" style="margin-top: 15px;">
+                    <button class="optimizer-btn secondary" id="optimizer-reset" style="width: 100%;">
+                        ${ICONS.refresh} ${escapeHtml(t('reset'))}
+                    </button>
+                </div>
             </div>
         `;
 
-        // Insérer au bon endroit dans le menu
+        const children = Array.from(temp.children);
         if (insertAfter && insertAfter.parentNode) {
-            // Insérer après le dernier menu_block (section Streaming)
-            insertAfter.parentNode.insertBefore(section, insertAfter.nextSibling);
-            console.log('[Optimizer+] UI insérée après la section Streaming');
+            let current = insertAfter;
+            children.forEach(child => {
+                current.parentNode.insertBefore(child, current.nextSibling);
+                current = child;
+            });
+            console.log('[Optimizer+] UI injectée directement après la section Streaming');
         } else {
-            // Fallback: ajouter à la fin du menu
-            menuElement.appendChild(section);
+            children.forEach(child => {
+                menuElement.appendChild(child);
+            });
             console.log('[Optimizer+] UI ajoutée à la fin du menu');
         }
 
-        // Attacher les événements
         attachUIEvents();
 
-        // Initialiser le style des sliders (comme Boosteroid)
         initSliderStyles();
 
         console.log('[Optimizer+] Interface injectée avec succès');
     }
 
-    // Fonction pour créer un slider personnalisé visuellement
     function createCustomSlider(inputElement) {
-        // Créer le wrapper
         const wrapper = document.createElement('div');
         wrapper.className = 'optimizer-slider';
 
-        // Créer les éléments visuels
         const track = document.createElement('div');
         track.className = 'optimizer-slider-track';
 
@@ -5861,12 +6203,9 @@
         wrapper.appendChild(fill);
         wrapper.appendChild(thumb);
 
-        // Insérer le wrapper avant l'input
         inputElement.parentNode.insertBefore(wrapper, inputElement);
-        // Déplacer l'input dans le wrapper
         wrapper.appendChild(inputElement);
 
-        // Fonction de mise à jour visuelle
         const updateVisual = () => {
             const min = parseFloat(inputElement.min) || 0;
             const max = parseFloat(inputElement.max) || 100;
@@ -5877,21 +6216,17 @@
             thumb.style.left = `${percentage}%`;
         };
 
-        // Initialiser
         updateVisual();
 
-        // Écouter les changements
         inputElement.addEventListener('input', updateVisual);
 
         return wrapper;
     }
 
     function initSliderStyles() {
-        // Sélectionner tous les sliders de notre section
-        const sliders = document.querySelectorAll('#optimizer-section input[type="range"]');
+        const sliders = document.querySelectorAll('.optimizer-injected input[type="range"]');
 
         sliders.forEach(slider => {
-            // Vérifier si déjà wrappé
             if (!slider.parentElement.classList.contains('optimizer-slider')) {
                 createCustomSlider(slider);
             }
@@ -5899,12 +6234,10 @@
     }
 
     function attachUIEvents() {
-        // Fonction de sauvegarde automatique (appelée à chaque changement)
         const autoSave = () => {
-            Storage.set('config', CONFIG);
+            saveConfig(true);
         };
 
-        // Résolution
         const resSelect = document.getElementById('optimizer-res-select');
         if (resSelect) {
             resSelect.addEventListener('change', (e) => {
@@ -5913,7 +6246,6 @@
                 let isAutoMode = false;
 
                 if (value === 'auto') {
-                    // Mode auto - utilise la résolution native
                     isAutoMode = true;
                     const autoRes = SmartResolutionDetector.applyAutoResolution();
                     if (autoRes) {
@@ -5931,20 +6263,26 @@
                 CONFIG.resolution.width = width;
                 CONFIG.resolution.height = height;
                 CONFIG.resolution.isAuto = isAutoMode;
-                // v3.6.2: Pixel ratio intelligent selon résolution
                 CONFIG.resolution.pixelRatio = width >= 3840 ? 2 : (width >= 2560 ? 1.5 : 1);
 
-                // Mettre à jour l'affichage
                 const resDisplay = document.getElementById('optimizer-resolution');
                 if (resDisplay) {
                     resDisplay.textContent = isAutoMode ? `Auto: ${width}x${height}` : `${width}x${height}`;
                 }
 
-                // Réappliquer le hook de résolution
                 hookResolution();
 
-                // Notification
-                const aspectRatio = (width / height).toFixed(2);
+                // Make Boosteroid recompute the video size (avoids the zoomed-corner bug)
+                setTimeout(() => {
+                    window.dispatchEvent(new Event('resize'));
+                    const video = document.querySelector('video');
+                    if (video && !CONFIG.display.stretchMode) {
+                        video.style.transform = '';
+                    }
+                }, 100);
+
+                // aspectRatio must be a number (toFixed returns a string)
+                const aspectRatio = width / height;
                 let ratioName = '16:9';
                 if (aspectRatio >= 3.4) ratioName = '32:9';
                 else if (aspectRatio >= 2.2) ratioName = '21:9';
@@ -5954,10 +6292,10 @@
                 const modeText = isAutoMode ? 'Auto' : '';
                 showNotification(`${modeText} Resolution: ${width}x${height} (${ratioName})`);
                 autoSave();
+                confirmResolution(width, height);
             });
         }
 
-        // Enhancer toggle
         const enhancerToggle = document.getElementById('optimizer-enhancer');
         if (enhancerToggle) {
             enhancerToggle.addEventListener('change', (e) => {
@@ -5966,23 +6304,6 @@
             });
         }
 
-        // Stream Interceptor toggle (opt-in)
-        const streamInterceptorToggle = document.getElementById('optimizer-stream-interceptor');
-        if (streamInterceptorToggle) {
-            streamInterceptorToggle.addEventListener('change', (e) => {
-                CONFIG.streaming.interceptorEnabled = e.target.checked;
-                if (e.target.checked) {
-                    StreamInterceptor.enable();
-                    showNotification('Stream Interceptor enabled');
-                } else {
-                    StreamInterceptor.disable();
-                    showNotification('Stream Interceptor disabled');
-                }
-                autoSave();
-            });
-        }
-
-        // v3.6.1 Filtres avancés toggle - Affiche/cache les détails
         const filtersToggle = document.getElementById('optimizer-filters-toggle');
         if (filtersToggle) {
             filtersToggle.addEventListener('change', (e) => {
@@ -5991,39 +6312,52 @@
                 if (detailsSection) {
                     detailsSection.style.display = e.target.checked ? 'block' : 'none';
                 }
-                autoSave();
-            });
-        }
-
-        // v3.6 Performance Mode toggle
-        const perfModeToggle = document.getElementById('optimizer-performance-mode');
-        if (perfModeToggle) {
-            perfModeToggle.addEventListener('change', (e) => {
-                CONFIG.display.performanceMode = e.target.checked;
-
-                if (e.target.checked) {
-                    // Mode Performance: désactiver les filtres lourds
-                    CONFIG.filters.clarity.enabled = false;
-                    CONFIG.filters.denoise.enabled = false;
-                    CONFIG.filters.deband.enabled = false;
-                    CONFIG.performance.gpuAcceleration = false;
-
-                    // Réappliquer les filtres légers uniquement
-                    videoEnhancer.updateFilterString();
-                    videoEnhancer.applyFiltersToAllVideos();
-
-                    showNotification('Performance Mode ON - FPS maximized');
-                } else {
-                    // Réactiver l'accélération GPU
-                    CONFIG.performance.gpuAcceleration = true;
-                    showNotification('Normal mode restored');
+                if (!e.target.checked) {
+                    CONFIG.filters.preset = null;
+                    document.querySelectorAll('.optimizer-preset-btn').forEach(btn => btn.classList.remove('active'));
                 }
-
                 autoSave();
             });
         }
 
-        // Sharpness
+        // Performance mode: lighter shader path, the user's filter config is untouched
+        const filtersPerfToggle = document.getElementById('optimizer-filters-performance-toggle');
+        if (filtersPerfToggle) {
+            filtersPerfToggle.addEventListener('change', (e) => {
+                CONFIG.filters.performanceMode = e.target.checked;
+                console.log(`[Optimizer+] Performance Mode: ${e.target.checked ? 'ON (filtres légers)' : 'OFF (qualité max)'}`);
+                videoEnhancer.updateFilterString();
+                videoEnhancer.applyFiltersToAllVideos();
+                if (typeof showNotification === 'function') {
+                    showNotification(e.target.checked
+                        ? t('perfModeNotifOn' ) || 'Mode Performance: FPS maximisés'
+                        : t('perfModeNotifOff') || 'Mode Performance désactivé (qualité max)');
+                }
+                autoSave();
+            });
+        }
+
+        const stretchModeToggle = document.getElementById('optimizer-stretch-mode');
+        if (stretchModeToggle) {
+            stretchModeToggle.addEventListener('change', (e) => {
+                CONFIG.display.stretchMode = e.target.checked;
+                // No autoSave(): stretch does not persist across sessions
+                if (e.target.checked) {
+                    document.documentElement.classList.add('optimizer-stretch-mode');
+                    // WebGPU: stretch the canvas too
+                    const glCanvas = document.getElementById('optimizer-webgpu-canvas') || document.getElementById('optimizer-webgl-canvas');
+                    if (glCanvas) glCanvas.style.objectFit = 'fill';
+                    showNotification('Stretch Mode ON (Borders Removed)');
+                } else {
+                    document.documentElement.classList.remove('optimizer-stretch-mode');
+                    const glCanvas = document.getElementById('optimizer-webgpu-canvas') || document.getElementById('optimizer-webgl-canvas');
+                    if (glCanvas) glCanvas.style.objectFit = 'contain';
+                    showNotification('Stretch Mode OFF');
+                }
+                videoEnhancer.refreshBox();
+            });
+        }
+
         const sharpSlider = document.getElementById('optimizer-sharpness');
         if (sharpSlider) {
             sharpSlider.addEventListener('input', (e) => {
@@ -6034,7 +6368,6 @@
             });
         }
 
-        // Contrast
         const contrastSlider = document.getElementById('optimizer-contrast');
         if (contrastSlider) {
             contrastSlider.addEventListener('input', (e) => {
@@ -6045,7 +6378,6 @@
             });
         }
 
-        // Saturation
         const satSlider = document.getElementById('optimizer-saturation');
         if (satSlider) {
             satSlider.addEventListener('input', (e) => {
@@ -6056,43 +6388,41 @@
             });
         }
 
-        // Reset button - Réinitialisation instantanée
         const resetBtn = document.getElementById('optimizer-reset');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
-                // Réinitialiser le CONFIG avec les valeurs par défaut
                 CONFIG.resolution = { ...DEFAULT_CONFIG.resolution };
                 CONFIG.enhancer = { ...DEFAULT_CONFIG.enhancer };
+                CONFIG.enhancer.enabled = true;
                 CONFIG.filters = JSON.parse(JSON.stringify(DEFAULT_CONFIG.filters));
                 CONFIG.language = DEFAULT_CONFIG.language;
 
-                // Sauvegarder le nouveau config
-                localStorage.removeItem('optimizer_config');
-                Storage.set('config', CONFIG);
+                if (CONFIG.display) CONFIG.display.stretchMode = false;
+                document.documentElement.classList.remove('optimizer-stretch-mode');
+                const glCanvas = document.getElementById('optimizer-webgpu-canvas') || document.getElementById('optimizer-webgl-canvas');
+                if (glCanvas) glCanvas.style.objectFit = 'contain';
 
-                // Mettre à jour VideoEnhancer immédiatement
+                localStorage.removeItem('optimizer_config');
+                saveConfig(false);
+
                 videoEnhancer.enabled = CONFIG.enhancer.enabled;
                 videoEnhancer.filtersEnabled = CONFIG.filters.enabled;
                 videoEnhancer.updateFilterString();
-                videoEnhancer.updateSVGFilters();
                 videoEnhancer.applyFiltersToAllVideos();
 
-                // Mettre à jour l'interface
                 updateAllUIValues();
 
                 showNotification('[OK] ' + t('settingsReset').replace('[<<] ', ''));
-                console.log('[Optimizer+] Reset effectué - valeurs par défaut restaurées');
+                console.log('[Optimizer+] Reset effectu\u00E9 - valeurs par d\u00E9faut restaur\u00E9es');
             });
         }
 
-        // Sélecteur de langue
         const langSelect = document.getElementById('optimizer-lang-select');
         if (langSelect) {
             langSelect.addEventListener('change', (e) => {
                 const newLang = e.target.value;
                 CONFIG.language = newLang;
 
-                // Mettre à jour la langue courante
                 if (newLang === 'auto') {
                     const browserLang = (navigator.language || navigator.userLanguage || 'en').substring(0, 2).toLowerCase();
                     currentLang = I18N.translations[browserLang] ? browserLang : 'en';
@@ -6103,11 +6433,11 @@
                 autoSave();
                 showNotification(`${t('language')}: ${e.target.options[e.target.selectedIndex].text}`);
 
-                // Recréer l'UI pour appliquer la nouvelle langue
+                // Rebuild the UI in the new language
                 setTimeout(() => {
-                    const section = document.getElementById('optimizer-section');
-                    if (section) {
-                        section.remove();
+                    const injectedElements = document.querySelectorAll('.optimizer-injected');
+                    if (injectedElements.length > 0) {
+                        injectedElements.forEach(el => el.remove());
                         SessionState.isUIInjected = false;
                         const menu = findOpenOptionsMenu();
                         if (menu) {
@@ -6119,28 +6449,25 @@
             });
         }
 
-        // === FILTRES AVANCÉS ===
+        // === ADVANCED FILTERS ===
 
-        // Présets
         const presetBtns = document.querySelectorAll('.optimizer-preset-btn');
         presetBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const preset = e.target.dataset.preset;
+                const preset = e.currentTarget.dataset.preset;
                 videoEnhancer.applyPreset(preset);
 
-                // Update UI
                 presetBtns.forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
+                e.currentTarget.classList.add('active');
 
-                // Mettre à jour les sliders de l'interface
-                updateFiltersUI();
+                // Defer DOM updates to next frame to avoid reflow shake
+                requestAnimationFrame(() => updateFiltersUI());
 
                 autoSave();
-                showNotification(t('presetApplied', { name: FILTER_PRESETS[preset].name }));
+                showNotification(t('presetApplied', { name: FILTER_PRESETS[preset]?.name || preset }));
             });
         });
 
-        // Filter toggles individuels
         document.querySelectorAll('.optimizer-filter-checkbox').forEach(toggle => {
             toggle.addEventListener('change', (e) => {
                 const filterName = e.target.dataset.filter;
@@ -6148,13 +6475,11 @@
 
                 videoEnhancer.toggleFilter(filterName, isActive);
 
-                // Passer en mode custom
                 setPresetToCustom();
                 autoSave();
             });
         });
 
-        // USM sliders
         const usmAmount = document.getElementById('usm-amount');
         if (usmAmount) {
             usmAmount.addEventListener('input', (e) => {
@@ -6166,7 +6491,6 @@
             });
         }
 
-        // CAS slider
         const casSharpness = document.getElementById('cas-sharpness');
         if (casSharpness) {
             casSharpness.addEventListener('input', (e) => {
@@ -6178,7 +6502,6 @@
             });
         }
 
-        // Clarity slider
         const clarityAmount = document.getElementById('clarity-amount');
         if (clarityAmount) {
             clarityAmount.addEventListener('input', (e) => {
@@ -6190,7 +6513,6 @@
             });
         }
 
-        // Denoise slider
         const denoiseStrength = document.getElementById('denoise-strength');
         if (denoiseStrength) {
             denoiseStrength.addEventListener('input', (e) => {
@@ -6202,7 +6524,6 @@
             });
         }
 
-        // Vibrance slider
         const vibranceAmount = document.getElementById('vibrance-amount');
         if (vibranceAmount) {
             vibranceAmount.addEventListener('input', (e) => {
@@ -6213,11 +6534,21 @@
                 autoSave();
             });
         }
+
+        const debandStrength = document.getElementById('deband-strength');
+        if (debandStrength) {
+            debandStrength.addEventListener('input', (e) => {
+                const value = parseInt(e.target.value) / 100;
+                document.getElementById('deband-title').textContent = `${e.target.value}%`;
+                videoEnhancer.updateFilterSettings('deband', { strength: value });
+                setPresetToCustom();
+                autoSave();
+            });
+        }
     }
 
-    // Fonction pour mettre à jour TOUTE l'interface avec les valeurs actuelles du CONFIG
+    // Refresh the whole UI from CONFIG
     function updateAllUIValues() {
-        // Résolution
         const resSelect = document.getElementById('optimizer-res-select');
         if (resSelect) {
             resSelect.value = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
@@ -6227,19 +6558,26 @@
             resDisplay.textContent = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
         }
 
-        // Enhancer toggle
         const enhancerToggle = document.getElementById('optimizer-enhancer');
         if (enhancerToggle) {
             enhancerToggle.checked = CONFIG.enhancer.enabled;
         }
 
-        // Filtres toggle
         const filtersToggle = document.getElementById('optimizer-filters-toggle');
         if (filtersToggle) {
             filtersToggle.checked = CONFIG.filters.enabled;
         }
 
-        // Présets - mettre à jour le bouton actif
+        const stretchModeToggle = document.getElementById('optimizer-stretch-mode');
+        if (stretchModeToggle && CONFIG.display) {
+            stretchModeToggle.checked = CONFIG.display.stretchMode;
+        }
+
+        const filtersPerfToggle = document.getElementById('optimizer-filters-performance-toggle');
+        if (filtersPerfToggle) {
+            filtersPerfToggle.checked = CONFIG.filters.performanceMode;
+        }
+
         const presetBtns = document.querySelectorAll('.optimizer-preset-btn');
         presetBtns.forEach(btn => {
             btn.classList.remove('active');
@@ -6248,19 +6586,24 @@
             }
         });
 
-        // Langue
         const langSelect = document.getElementById('optimizer-lang-select');
         if (langSelect) {
             langSelect.value = CONFIG.language;
         }
 
-        // Mettre à jour tous les sliders et toggles des filtres
         updateFiltersUI();
+
     }
 
-    // Fonction pour mettre à jour l'UI des filtres
     function updateFiltersUI() {
-        // Enhancer de base
+        // Sync advanced filters details drawer visibility
+        const detailsSection = document.getElementById('optimizer-filters-details');
+        if (detailsSection) {
+            detailsSection.style.display = CONFIG.filters.enabled ? 'block' : 'none';
+        }
+
+        // Performance mode changes the shader, not the config: sliders always stay enabled
+
         const sharpSlider = document.getElementById('optimizer-sharpness');
         if (sharpSlider) {
             sharpSlider.value = CONFIG.enhancer.sharpness * 100;
@@ -6279,114 +6622,111 @@
             document.getElementById('optimizer-sat-value').textContent = `${Math.round(CONFIG.enhancer.saturation * 100)}%`;
         }
 
-        // Filtres avancés
         const filters = CONFIG.filters;
 
-        // USM
         const usmAmountEl = document.getElementById('usm-amount');
         if (usmAmountEl) {
             usmAmountEl.value = filters.usm.amount * 100;
+            usmAmountEl.disabled = false;
             document.getElementById('usm-title').textContent = `${Math.round(filters.usm.amount * 100)}%`;
         }
 
-        // CAS
         const casSharpnessEl = document.getElementById('cas-sharpness');
         if (casSharpnessEl) {
             casSharpnessEl.value = filters.cas.sharpness * 100;
+            casSharpnessEl.disabled = false;
             document.getElementById('cas-title').textContent = `${Math.round(filters.cas.sharpness * 100)}%`;
         }
 
-        // Clarity
         const clarityAmountEl = document.getElementById('clarity-amount');
         if (clarityAmountEl) {
             clarityAmountEl.value = filters.clarity.amount * 100;
+            clarityAmountEl.disabled = false;
             document.getElementById('clarity-title').textContent = `${Math.round(filters.clarity.amount * 100)}%`;
         }
 
-        // Denoise
         const denoiseStrengthEl = document.getElementById('denoise-strength');
         if (denoiseStrengthEl) {
             denoiseStrengthEl.value = filters.denoise.strength * 100;
+            denoiseStrengthEl.disabled = false;
             document.getElementById('denoise-title').textContent = `${Math.round(filters.denoise.strength * 100)}%`;
         }
 
-        // Vibrance
         const vibranceAmountEl = document.getElementById('vibrance-amount');
         if (vibranceAmountEl) {
             vibranceAmountEl.value = filters.vibrance.amount * 100;
+            vibranceAmountEl.disabled = false;
             document.getElementById('vibrance-title').textContent = `${Math.round(filters.vibrance.amount * 100)}%`;
         }
 
-        // Mettre à jour les toggles
-        ['usm', 'cas', 'clarity', 'denoise', 'vibrance'].forEach(filterName => {
+        const debandStrengthEl = document.getElementById('deband-strength');
+        if (debandStrengthEl) {
+            debandStrengthEl.value = filters.deband.strength * 100;
+            debandStrengthEl.disabled = false;
+            document.getElementById('deband-title').textContent = `${Math.round(filters.deband.strength * 100)}%`;
+        }
+
+        ['usm', 'cas', 'clarity', 'denoise', 'vibrance', 'deband'].forEach(filterName => {
             const checkbox = document.querySelector(`.optimizer-filter-checkbox[data-filter="${filterName}"]`);
             if (checkbox) {
                 checkbox.checked = filters[filterName].enabled;
+                checkbox.disabled = false;
             }
         });
 
-        // Mettre à jour le style visuel des sliders
-        const sliders = document.querySelectorAll('#optimizer-section input[type="range"]');
+        const sliders = document.querySelectorAll('.optimizer-injected input[type="range"]');
         sliders.forEach(slider => updateSliderStyle(slider));
     }
 
-    // Fonction pour passer en mode custom quand on modifie manuellement
+    // Updates a custom slider's fill and thumb position
+    function updateSliderStyle(slider) {
+        if (!slider || !slider.parentElement) return;
+        const wrapper = slider.closest('.optimizer-slider');
+        if (!wrapper) return; // not wrapped yet
+
+        const fill = wrapper.querySelector('.optimizer-slider-fill');
+        const thumb = wrapper.querySelector('.optimizer-slider-thumb');
+        if (!fill || !thumb) return;
+
+        const min = parseFloat(slider.min) || 0;
+        const max = parseFloat(slider.max) || 100;
+        const value = parseFloat(slider.value) || 0;
+        const percentage = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
+
+        fill.style.width = `${percentage}%`;
+        thumb.style.left = `${percentage}%`;
+    }
+
+    // Manual edits switch the preset to custom
     function setPresetToCustom() {
         CONFIG.filters.preset = 'custom';
 
-        // Mettre à jour les boutons de préset
         document.querySelectorAll('.optimizer-preset-btn').forEach(btn => {
             btn.classList.remove('active');
         });
     }
 
-    function showDRMInfo() {
-        let info = "=== Optimizer Plus - Info DRM ===\n\n";
-
-        info += `Resolution forcee: ${CONFIG.resolution.width}x${CONFIG.resolution.height}\n`;
-        info += `Pixel Ratio: ${CONFIG.resolution.pixelRatio}x\n\n`;
-
-        info += "Codecs actives:\n";
-        info += `  - AV1: ${CONFIG.codecs.forceAV1 ? '[OK]' : '[X]'}\n`;
-        info += `  - HEVC: ${CONFIG.codecs.forceHEVC ? '[OK]' : '[X]'}\n`;
-        info += `  - VP9: ${CONFIG.codecs.forceVP9 ? '[OK]' : '[X]'}\n\n`;
-
-        info += `Bitrate max: ${CONFIG.streaming.maxBitrate / 1000000} Mbps\n\n`;
-
-        info += "Enhancer:\n";
-        info += `  - Active: ${CONFIG.enhancer.enabled ? '[OK]' : '[X]'}\n`;
-        info += `  - Nettete: ${Math.round(CONFIG.enhancer.sharpness * 100)}%\n`;
-        info += `  - Contraste: ${Math.round(CONFIG.enhancer.contrast * 100)}%\n`;
-        info += `  - Saturation: ${Math.round(CONFIG.enhancer.saturation * 100)}%\n`;
-
-        // Vérifier les capacités DRM
-        if (windowCtx.MSMediaKeys && windowCtx.MSMediaKeys.isTypeSupportedWithFeaturesOriginal) {
-            info += "\nPlayReady DRM:\n";
-            const hwSupport = windowCtx.MSMediaKeys.isTypeSupportedWithFeaturesOriginal(
-                "com.microsoft.playready.hardware",
-                'video/mp4; codecs="hev1,mp4a"; features="hdcp=2"'
-            ) !== '';
-            info += `  - Hardware HDCP 2.2: ${hwSupport ? '[OK]' : '[X]'}\n`;
-        }
-
-        alert(info);
-    }
-
-    // ===============================================================================
-    // VIDEO OBSERVER - Détection et amélioration des éléments vidéo
-    // ===============================================================================
+    // VIDEO OBSERVER
 
     function setupVideoObserver() {
         const observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
+            const mutationsLen = mutations.length;
+            for (let i = 0; i < mutationsLen; i++) {
+                const added = mutations[i].addedNodes;
+                const addedLen = added.length;
+                for (let j = 0; j < addedLen; j++) {
+                    const node = added[j];
                     if (node.nodeName === 'VIDEO') {
                         handleVideoElement(node);
                     } else if (node.querySelectorAll) {
-                        node.querySelectorAll('video').forEach(handleVideoElement);
+                        const videos = node.querySelectorAll('video');
+                        const videosLen = videos.length;
+                        for (let k = 0; k < videosLen; k++) {
+                            handleVideoElement(videos[k]);
+                        }
                     }
-                });
-            });
+                }
+            }
         });
 
         observer.observe(document.documentElement, {
@@ -6394,159 +6734,99 @@
             subtree: true
         });
 
-        // Traiter les vidéos existantes
         document.querySelectorAll('video').forEach(handleVideoElement);
     }
 
     function handleVideoElement(video) {
-        console.log('[Optimizer+] Vidéo détectée');
+        console.log('[Optimizer+] Vid\u00E9o d\u00E9tect\u00E9e');
 
-        // Appliquer l'enhancer
-        videoEnhancer.applyToVideo(video);
-
-        // Optimisations vidéo
-        video.setAttribute('playsinline', '');
-
-        // Note: Le monitoring de frames a été désactivé pour performance
-        // Utiliser le mode Performance dans les paramètres si nécessaire
-    }
-
-    // ===============================================================================
-    // MENU COMMANDS - Commandes Tampermonkey
-    // ===============================================================================
-
-    function registerMenuCommands() {
-        if (typeof GM_registerMenuCommand === 'undefined') return;
-
-        GM_registerMenuCommand("Optimizer Plus - Parametres", () => {
-            // Ouvrir le menu Boosteroid si possible
-            const menuBtn = document.querySelector('[class*="menu"]');
-            if (menuBtn) menuBtn.click();
-        });
-
-        GM_registerMenuCommand("Info DRM & Codecs", showDRMInfo);
-
-        GM_registerMenuCommand("Toggle AV1", () => {
-            CONFIG.codecs.forceAV1 = !CONFIG.codecs.forceAV1;
-            Storage.set('config', CONFIG);
-            showNotification(`AV1: ${CONFIG.codecs.forceAV1 ? 'Active' : 'Desactive'}`);
-        });
-
-        GM_registerMenuCommand("Toggle Enhancer", () => {
-            videoEnhancer.toggle(!CONFIG.enhancer.enabled);
-            showNotification(`Enhancer: ${CONFIG.enhancer.enabled ? 'Active' : 'Desactive'}`);
-        });
-
-        GM_registerMenuCommand("Recharger avec parametres", () => {
-            location.reload();
-        });
-    }
-
-    // ===============================================================================
-    // v3.6.3 DASHBOARD FLOATING WIDGET - Bouton flottant sur le dashboard
-    // Permet de configurer la résolution avant de lancer un jeu
-    // ===============================================================================
-
-    function createDashboardWidget() {
-        // Vérifier qu'on est bien sur le dashboard principal
-        if (document.getElementById('optimizer-dashboard-widget')) {
-            return; // Déjà créé
+        // Bind the renderer to the WebRTC stream only (srcObject). Videos with src= (dashboard
+        // trailers) would otherwise steal the canvas from the stream.
+        if (video.srcObject) {
+            videoEnhancer.applyToVideo(video);
+        } else {
+            video.addEventListener('loadedmetadata', () => {
+                if (video.srcObject) videoEnhancer.applyToVideo(video);
+            }, { once: true });
         }
 
-        // v3.7.3-beta: Timeout max pour le chatbot en mode PWA
-        let waitAttempts = 0;
-        const maxWaitAttempts = 10; // Max 5 secondes d'attente
+        video.setAttribute('playsinline', '');
 
-        // Attendre que le DOM soit prêt - mais ne pas bloquer en PWA
-        const waitForReadyOrTimeout = () => {
-            const chatbot = document.getElementById('botbutton');
-            waitAttempts++;
+    }
 
-            if (chatbot) {
-                // Chatbot trouvé - injecter normalement
-                console.log('[Optimizer+] [BETA] Chatbot détecté - injection widget');
-                injectWidget();
-            } else if (waitAttempts >= maxWaitAttempts) {
-                // Timeout atteint (mode PWA probable) - injecter quand même
-                console.log('[Optimizer+] [BETA] Mode PWA/Standalone - injection widget sans chatbot');
-                injectWidget();
-            } else {
-                // Réessayer après un délai
-                setTimeout(waitForReadyOrTimeout, 500);
-            }
-        };
+    // DASHBOARD FLOATING WIDGET - Sets the resolution before launching a game
 
-        // Créer le widget immédiatement, positionnement relatif au chatbot si présent
+    function createDashboardWidget() {
+        if (document.getElementById('optimizer-dashboard-widget')) {
+            return;
+        }
+
         const injectWidget = () => {
             const widget = document.createElement('div');
             widget.id = 'optimizer-dashboard-widget';
-            
-            // v3.7.3-beta: Position adaptée pour PWA (plus bas si pas de chatbot)
-            const hasChatbot = !!document.getElementById('botbutton');
-            const bottomPos = hasChatbot ? '180px' : '20px';
-            
-            // v3.7.2: Style inline pour éviter flash blanc au chargement
-            widget.style.cssText = `position:fixed;right:20px;bottom:${bottomPos};z-index:99998;background:transparent;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 0.25s ease 0.05s;`;
+            // Inline style avoids a white flash on load
+            widget.style.cssText = 'position:fixed;right:20px;bottom:40px;z-index:9999999 !important;background:transparent;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 0.25s ease 0.05s;';
 
-            // Utiliser le Smart Resolution Detector pour générer les options
             const screenAnalysis = SmartResolutionDetector.getScreenAnalysis();
             const resolutionOptions = SmartResolutionDetector.generateResolutionOptionsHTML(
                 CONFIG.resolution.width,
                 CONFIG.resolution.height,
-                CONFIG.resolution.isAuto // v3.7.2: Passer le mode auto
+                CONFIG.resolution.isAuto
             );
 
-            // Déterminer le status actuel (auto ou manuel)
             const currentResText = CONFIG.resolution.isAuto
                 ? `Auto: ${CONFIG.resolution.width}x${CONFIG.resolution.height}`
                 : `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
+            const safeCurrentResText = escapeHtml(currentResText);
+            const safeScreenWidth = escapeHtml(screenAnalysis.screen.width);
+            const safeScreenHeight = escapeHtml(screenAnalysis.screen.height);
+            const safeScreenRatioType = escapeHtml(screenAnalysis.screen.ratioType);
+            const safeScreenRatioName = escapeHtml(screenAnalysis.screen.ratioName);
+            const hardwareTier = ENV_PROFILE.isHighEnd ? 'High-End' : (ENV_PROFILE.isMidRange ? 'Mid-Range' : 'Low-End');
 
             widget.innerHTML = `
                 <!-- Bouton principal -->
-                <button type="button" class="opt-widget-btn" id="opt-widget-toggle" title="Optimizer Plus - Settings" style="background:linear-gradient(135deg,#00a3ff 0%,#0066cc 100%);border:none;width:56px;height:56px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;">
+                <button type="button" class="opt-widget-btn" id="opt-widget-toggle" title="Optimizer Plus - Settings" style="background:linear-gradient(135deg,#00a3ff 0%,#0066cc 100%);border:none;width:56px;height:56px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;pointer-events:auto !important;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:28px;height:28px;color:white;">
                         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                     </svg>
-                    <div class="opt-status-dot" title="Active: ${currentResText}" style="position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;"></div>
+                    <div class="opt-status-dot" title="Active: ${safeCurrentResText}" style="position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;"></div>
                 </button>
 
-                <!-- Panel déroulant -->
-                <div class="opt-widget-panel" id="opt-widget-panel" style="position:absolute;bottom:70px;right:0;width:280px;background:rgba(19,23,33,0.98);color:#fff;border:1px solid rgba(0,163,255,0.3);border-radius:12px;padding:16px;opacity:0;visibility:hidden;transform:translateY(10px) scale(0.95);transition:all 0.25s cubic-bezier(0.4,0,0.2,1);">
+                <div class="opt-widget-panel" id="opt-widget-panel" style="position:absolute;bottom:70px;right:0;width:280px;background:rgba(19,23,33,0.98);color:#fff;border:1px solid rgba(0,163,255,0.3);border-radius:12px;padding:16px;opacity:0;visibility:hidden;transform:translateY(10px) scale(0.95);transition:all 0.25s cubic-bezier(0.4,0,0.2,1);pointer-events:auto !important;">
                     <div class="opt-widget-header">
                         <span class="opt-widget-title">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                             Optimizer Plus
-                            <span class="opt-widget-version">v3.7.3-β</span>
+                            <span class="opt-widget-version">v${SCRIPT_VERSION}</span>
                         </span>
                     </div>
 
-                    <!-- Info écran détecté -->
                     <div class="opt-widget-screen-info">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0;"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                         <span class="opt-screen-label">Screen:</span>
-                        <span class="opt-screen-value">${screenAnalysis.screen.width}x${screenAnalysis.screen.height}</span>
-                        <span class="opt-screen-ratio">${screenAnalysis.screen.ratioType} ${screenAnalysis.screen.ratioName}</span>
+                        <span class="opt-screen-value">${safeScreenWidth}x${safeScreenHeight}</span>
+                        <span class="opt-screen-ratio">${safeScreenRatioType} ${safeScreenRatioName}</span>
                     </div>
 
                     <!-- Status actuel -->
                     <div class="opt-widget-status">
                         <div class="opt-widget-status-dot"></div>
                         <span class="opt-widget-status-text" id="opt-widget-status-text">
-                            ${currentResText}
+                            ${safeCurrentResText}
                         </span>
                     </div>
 
-                    <!-- Sélecteur de résolution -->
                     <div class="opt-widget-row">
                         <label class="opt-widget-label">Target Resolution</label>
-                        <select class="opt-widget-select" id="opt-widget-resolution" style="background:rgba(6,9,18,0.9);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;">
+                        <select class="opt-widget-select" id="opt-widget-resolution" style="background:rgba(6,9,18,0.9);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;pointer-events:auto !important;">
                             ${resolutionOptions}
                         </select>
                     </div>
 
                     <!-- Boutons d'action -->
                     <div class="opt-widget-actions" style="display:flex;gap:8px;">
-                        <button class="opt-widget-action-btn secondary" id="opt-widget-reload" title="Recharger la page" style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">
+                        <button class="opt-widget-action-btn secondary" id="opt-widget-reload" title="Recharger la page" style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:auto !important;">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <polyline points="1 20 1 14 7 14"/>
@@ -6554,7 +6834,7 @@
                             </svg>
                             Recharger
                         </button>
-                        <button class="opt-widget-action-btn primary" id="opt-widget-apply" title="Appliquer" style="background:#00a3ff;color:#fff;border:none;border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">
+                        <button class="opt-widget-action-btn primary" id="opt-widget-apply" title="Appliquer" style="background:#00a3ff;color:#fff;border:none;border-radius:8px;padding:10px 14px;cursor:pointer;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:auto !important;">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
                                 <polyline points="20 6 9 17 4 12"/>
                             </svg>
@@ -6564,18 +6844,19 @@
 
                     <!-- Footer -->
                     <div class="opt-widget-footer" style="color:rgba(255,255,255,0.4);text-align:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);">
-                        <span class="opt-widget-credit" style="font-size:10px;">by Derfog - ${ENV_PROFILE.isHighEnd ? ' High-End' : (ENV_PROFILE.isMidRange ? ' Mid-Range' : ' Low-End')}</span>
+                        <span class="opt-widget-credit" style="font-size:10px;">by Derfog - ${escapeHtml(hardwareTier)}</span>
                     </div>
                 </div>
             `;
 
             document.body.appendChild(widget);
 
-            // v3.7.5: Empêcher le flash blanc en affichant le widget seulement une fois stylé
+            // Reveal the widget only once styled (no white flash)
             const revealWidget = () => {
                 widget.style.opacity = '1';
                 widget.style.visibility = 'visible';
                 widget.style.pointerEvents = 'auto';
+                widget.style.zIndex = '9999999';
             };
 
             if (typeof requestAnimationFrame === 'function') {
@@ -6584,40 +6865,47 @@
                 setTimeout(revealWidget, 50);
             }
 
-            console.log('[Optimizer+] [OK] Dashboard widget injecté dans le DOM');
+            console.log('[Optimizer+] [OK] Dashboard widget inject\u00E9 dans le DOM');
 
-            // Attacher les événements avec plusieurs tentatives pour plus de robustesse
             const attachWithRetry = (attempt = 1) => {
                 const btn = document.getElementById('opt-widget-toggle');
                 if (btn) {
                     attachWidgetEvents();
-                    console.log('[Optimizer+] [OK] Événements attachés (tentative ' + attempt + ')');
+                    console.log('[Optimizer+] [OK] \u00C9v\u00E9nements attach\u00E9s (tentative ' + attempt + ')');
                 } else if (attempt < 5) {
-                    console.log('[Optimizer+] Bouton non trouvé, nouvelle tentative dans 100ms...');
+                    console.log('[Optimizer+] Bouton non trouv\u00E9, nouvelle tentative dans 100ms...');
                     setTimeout(() => attachWithRetry(attempt + 1), 100);
                 } else {
-                    console.error('[Optimizer+] [X] Impossible de trouver le bouton après 5 tentatives');
+                    console.error('[Optimizer+] [X] Impossible de trouver le bouton apr\u00E8s 5 tentatives');
                 }
             };
 
-            // Commencer après un délai
             setTimeout(() => attachWithRetry(), 50);
 
-            console.log('[Optimizer+] [OK] Dashboard widget créé');
+            console.log('[Optimizer+] [OK] Dashboard widget cr\u00E9\u00E9');
         };
 
-        // v3.7.3-beta: Démarrer la détection intelligente (PWA compatible)
         setTimeout(() => {
-            waitForReadyOrTimeout();
-        }, 300);
+            injectWidget();
+        }, 800);
     }
 
+    // Document-level handlers are stored so they can be removed (leak on SPA navigation otherwise)
+    let _widgetDocHandlers = null;
+    function detachWidgetEvents() {
+        if (!_widgetDocHandlers) return;
+        document.removeEventListener('click', _widgetDocHandlers.click);
+        document.removeEventListener('keydown', _widgetDocHandlers.keydown);
+        _widgetDocHandlers = null;
+    }
     function attachWidgetEvents() {
+        // Rebinding: remove the previous handlers first
+        detachWidgetEvents();
+
         const widget = document.getElementById('optimizer-dashboard-widget');
         const toggleBtn = document.getElementById('opt-widget-toggle');
         const panel = document.getElementById('opt-widget-panel');
         const resSelect = document.getElementById('opt-widget-resolution');
-        const reloadBtn = document.getElementById('opt-widget-reload');
         const applyBtn = document.getElementById('opt-widget-apply');
         const statusText = document.getElementById('opt-widget-status-text');
 
@@ -6633,36 +6921,44 @@
             return;
         }
 
-        // Utiliser la délégation d'événements sur le widget conteneur
-        widget.addEventListener('click', (e) => {
-            const target = e.target;
-
-            // Toggle button click
-            if (target.id === 'opt-widget-toggle' || target.closest('#opt-widget-toggle')) {
+        const handleToggle = (e) => {
+            if (e) {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('[Optimizer+] Toggle button clicked via delegation');
-                if (panel) {
-                    const isOpen = panel.classList.contains('open');
-                    if (isOpen) {
-                        // Fermer le panel
-                        panel.classList.remove('open');
-                        panel.style.opacity = '0';
-                        panel.style.visibility = 'hidden';
-                        panel.style.transform = 'translateY(10px) scale(0.95)';
-                    } else {
-                        // Ouvrir le panel
-                        panel.classList.add('open');
-                        panel.style.opacity = '1';
-                        panel.style.visibility = 'visible';
-                        panel.style.transform = 'translateY(0) scale(1)';
-                    }
-                    console.log('[Optimizer+] Panel state:', panel.classList.contains('open') ? 'OPEN' : 'CLOSED');
+            }
+            if (panel) {
+                const isOpen = panel.classList.contains('open');
+                if (isOpen) {
+                    panel.classList.remove('open');
+                    panel.style.opacity = '0';
+                    panel.style.visibility = 'hidden';
+                    panel.style.transform = 'translateY(10px) scale(0.95)';
+                } else {
+                    panel.classList.add('open');
+                    panel.style.opacity = '1';
+                    panel.style.visibility = 'visible';
+                    panel.style.transform = 'translateY(0) scale(1)';
                 }
+                console.log('[Optimizer+] Panel state:', panel.classList.contains('open') ? 'OPEN' : 'CLOSED');
+            }
+        };
+
+        if (toggleBtn) {
+            toggleBtn.style.pointerEvents = 'auto';
+            toggleBtn.addEventListener('click', handleToggle);
+        }
+
+        widget.addEventListener('click', (e) => {
+            const target = e.target;
+            if (!target) return;
+            const element = target.nodeType === 1 ? target : target.parentElement;
+            if (!element || !element.closest) return;
+
+            if (element.id === 'opt-widget-toggle' || element.closest('#opt-widget-toggle')) {
+                handleToggle(e);
                 return;
             }
 
-            // Reload button click
             if (target.id === 'opt-widget-reload' || target.closest('#opt-widget-reload')) {
                 e.preventDefault();
                 console.log('[Optimizer+] Reload button clicked');
@@ -6670,20 +6966,18 @@
                 return;
             }
 
-            // Apply button click
             if (target.id === 'opt-widget-apply' || target.closest('#opt-widget-apply')) {
                 e.preventDefault();
                 console.log('[Optimizer+] Apply button clicked');
-                Storage.set('config', CONFIG);
+                saveConfig(false);
                 hookResolution();
 
-                // Feedback visuel
                 if (applyBtn) {
                     applyBtn.innerHTML = `
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="20 6 9 17 4 12"/>
                         </svg>
-                        Appliqué!
+                        Appliqu\u00E9!
                     `;
                     applyBtn.style.background = '#22c55e';
 
@@ -6696,7 +6990,6 @@
                         `;
                         applyBtn.style.background = '';
 
-                        // Fermer le panel
                         if (panel) {
                             panel.classList.remove('open');
                             panel.style.opacity = '0';
@@ -6705,12 +6998,11 @@
                         }
                     }, 1500);
                 }
-                console.log('[Optimizer+] [OK] Configuration sauvegardée');
+                console.log('[Optimizer+] [OK] Configuration sauvegard\u00E9e');
                 return;
             }
         });
 
-        // Changement de résolution
         if (resSelect) {
             resSelect.addEventListener('change', (e) => {
                 const value = e.target.value;
@@ -6719,21 +7011,18 @@
 
                 if (value === 'auto') {
                     isAutoMode = true;
-                    // Mode auto-détection - utilise résolution NATIVE de l'écran
                     const autoRes = SmartResolutionDetector.applyAutoResolution();
                     if (autoRes) {
                         width = autoRes.w;
                         height = autoRes.h;
                         displayText = `Auto: ${width}x${height}`;
                     } else {
-                        // Fallback
                         const screen = SmartResolutionDetector.getScreenDimensions();
                         width = screen.width;
                         height = screen.height;
                         displayText = `Auto: ${width}x${height}`;
                     }
                 } else {
-                    // Résolution manuelle
                     [width, height] = value.split('x').map(Number);
                     displayText = `${width}x${height}`;
                 }
@@ -6741,20 +7030,17 @@
                 CONFIG.resolution.width = width;
                 CONFIG.resolution.height = height;
                 CONFIG.resolution.pixelRatio = width >= 3840 ? 2 : (width >= 2560 ? 1.5 : 1);
-                CONFIG.resolution.isAuto = isAutoMode; // v3.7.2: Marquer le mode auto
+                CONFIG.resolution.isAuto = isAutoMode;
 
-                // Mettre à jour le status
                 if (statusText) {
                     statusText.textContent = displayText;
                 }
 
-                // Mettre à jour le tooltip du status dot
                 const statusDot = document.querySelector('#optimizer-dashboard-widget .opt-status-dot');
                 if (statusDot) {
                     statusDot.title = `Actif: ${displayText}`;
                 }
 
-                // Mettre à jour l'info écran si auto
                 const screenValue = document.querySelector('.opt-screen-value');
                 if (screenValue && value === 'auto') {
                     screenValue.classList.add('auto-active');
@@ -6762,62 +7048,62 @@
                     screenValue.classList.remove('auto-active');
                 }
 
-                // Sauvegarder
-                Storage.set('config', CONFIG);
+                saveConfig(false);
 
-                // Réappliquer le hook
                 hookResolution();
 
-                console.log(`[Optimizer+] Résolution changée: ${displayText}`);
+                console.log(`[Optimizer+] R\u00E9solution chang\u00E9e: ${displayText}`);
             });
         }
 
-        // Fermer le panel en cliquant ailleurs
-        document.addEventListener('click', (e) => {
-            if (panel && !widget.contains(e.target)) {
+        const docClickHandler = (e) => {
+            if (panel && widget && !widget.contains(e.target)) {
                 panel.classList.remove('open');
                 panel.style.opacity = '0';
                 panel.style.visibility = 'hidden';
                 panel.style.transform = 'translateY(10px) scale(0.95)';
             }
-        });
-
-        // Fermer avec Escape
-        document.addEventListener('keydown', (e) => {
+        };
+        const docKeyHandler = (e) => {
             if (e.key === 'Escape' && panel) {
                 panel.classList.remove('open');
                 panel.style.opacity = '0';
                 panel.style.visibility = 'hidden';
                 panel.style.transform = 'translateY(10px) scale(0.95)';
             }
-        });
+        };
+        document.addEventListener('click', docClickHandler);
+        document.addEventListener('keydown', docKeyHandler);
+        _widgetDocHandlers = { click: docClickHandler, keydown: docKeyHandler };
 
         console.log('[Optimizer+] [OK] All widget events attached successfully');
     }
 
-    // ===============================================================================
     // INITIALISATION
-    // ===============================================================================
 
     function init() {
         console.log('[Optimizer+] =======================================');
-        console.log('[Optimizer+] Boosteroid Optimizer Plus v3.7.2 by Derfog');
+        console.log(`[Optimizer+] Boosteroid Optimizer Plus v${SCRIPT_VERSION} by Derfog`);
         console.log('[Optimizer+] Device:', ENV_PROFILE.summary());
-        console.log('[Optimizer+] Filter Tier:', FilterState.currentTier);
         console.log('[Optimizer+] Resolution:', `${CONFIG.resolution.width}x${CONFIG.resolution.height}`);
-        console.log('[Optimizer+] Bitrate:', `${Math.round(CONFIG.streaming.maxBitrate/1000000)}Mbps`);
+        console.log('[Optimizer+] Bitrate:', `${Math.round(CONFIG.streaming.maxBitrate / 1000000)}Mbps`);
         console.log('[Optimizer+] Low Latency:', CONFIG.performance.lowLatencyMode ? 'ON' : 'OFF');
         console.log('[Optimizer+] =======================================');
 
-        // IMPORTANT: Les hooks techniques s'appliquent PARTOUT (même dashboard)
-        // car ils préparent le navigateur pour le streaming
+        // Technical hooks apply everywhere (dashboard included): they prepare the browser for streaming
         hookResolution();
         hookCodecs();
-        hookBitrate();
         hookDRM();
         hookPerformance();
+        hookBitrate();
+        SmartCodecSelector.probe();
 
-        // L'UI et les observers ne s'activent QUE si on n'est pas sur le dashboard
+        // The fetch interceptor must be installed before Boosteroid's /configuration request,
+        // which can fire at page load
+        StreamInterceptor.enable();
+
+        console.log(`[Optimizer+] v${SCRIPT_VERSION} \u2014 WebGPU zero-copy mode active`);
+
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', onDOMReady);
         } else {
@@ -6826,54 +7112,27 @@
     }
 
     function onDOMReady() {
-        // Injecter les styles (toujours, ils seront utilisés si on lance un jeu)
         ensureOptimizerTypography();
 
-        // Enregistrer les commandes menu Tampermonkey (toujours disponibles)
-        registerMenuCommands();
-
-        // Déterminer le type de page
         const onStreaming = isStreamingPage();
         const onDashboard = isDashboardPage();
 
         console.log('[Optimizer+] Type de page - Streaming:', onStreaming, '| Dashboard:', onDashboard);
 
-        // Si on est sur le dashboard ET pas sur streaming, afficher le widget flottant
+        // Dashboard: show the floating widget only
         if (onDashboard && !onStreaming) {
-            console.log('[Optimizer+] Dashboard détecté - Widget flottant activé');
-            console.log('[Optimizer+] L\'UI complète s\'activera automatiquement quand vous lancerez un jeu');
+            console.log('[Optimizer+] Dashboard d\u00E9tect\u00E9 - Widget flottant activ\u00E9');
+            console.log('[Optimizer+] L\'UI compl\u00E8te s\'activera automatiquement quand vous lancerez un jeu');
             createDashboardWidget();
             return;
         }
 
-        // Créer les filtres SVG pour le sharpening
-        videoEnhancer.createSVGFilters();
-
-        // v3.5: Initialiser les filtres sans flickering
-        ZeroFlickerBootstrap.initializeFilters();
-
-        // Injecter le système d'UI intelligent
         injectUI();
 
-        // Observer les vidéos pour appliquer les filtres
         setupVideoObserver();
 
-        // v3.6.9 Log avec info écran
-        const screenInfo = UltrawideSupport.getScreenInfo();
-        console.log('[Optimizer+] v3.6.9 Smart Resolution [OK]');
-        console.log(`[Optimizer+] Screen: ${screenInfo.width}x${screenInfo.height} (${screenInfo.type})`);
-        // Raccourci ultrawide supprimé - utiliser le sélecteur de résolution
-
-        // v3.6 Auto-détection ratio pour logging seulement
-        if (CONFIG.display?.autoDetect !== false) {
-            const ratio = parseFloat(screenInfo.ratio);
-            if (ratio >= 2.0) {
-                console.log('[Optimizer+] Écran large détecté - résolutions ultrawide disponibles');
-            }
-        }
     }
 
-    // Démarrer
     init();
 
 })();
