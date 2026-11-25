@@ -18,6 +18,9 @@ swap(/const DEV_BUILD = false;/, 'const DEV_BUILD = true;');
 swap(/^(\/\/ @name\s+)Boosteroid Optimizer Plus$/m, '$1Boosteroid Optimizer Plus DEV');
 swap(/^\/\/ @updateURL.*\r?\n/m, '');
 swap(/^\/\/ @downloadURL.*\r?\n/m, '');
+// Build stamp in the version, so a pasted console says which dev copy produced it
+const stamp = new Date().toISOString().slice(5, 16).replace(/[-:]/g, '').replace('T', '-');
+swap(/(const SCRIPT_VERSION = '[^']+)';/, `$1-dev.${stamp}';`);
 
 fs.writeFileSync(DEV, src);
-console.log('dev build written:', path.basename(DEV));
+console.log('dev build written:', path.basename(DEV), stamp);

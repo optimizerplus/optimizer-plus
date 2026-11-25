@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name                Boosteroid Optimizer Plus
 // @namespace           https://github.com/Derfogd
-// @version             6.1.0
+// @version             6.1.1
 // @description         Advanced optimizations for Boosteroid: 4K resolution, AV1/HEVC codec, tuned bitrate, WebGPU zero-copy upscaling
 // @description:fr      Optimisations avancées pour Boosteroid : résolution 4K/8K, codec AV1/HEVC, bitrate optimisé, WebGPU zéro copie
 // @author              Derfog
@@ -31,14 +31,16 @@
     const DEV_BUILD = false;
 
     const _realConsole = window.console;
+    // Dev build: every script log is printed, prefixed with the time since page load, so a
+    // copy of the F12 console is a complete report. The per-packet bridges stay debug-only.
     const console = DEBUG_LOGS ? _realConsole : {
-        log: () => {},
+        log: DEV_BUILD ? (...a) => _realConsole.log(`[+${(performance.now() / 1000).toFixed(1)}s]`, ...a) : () => {},
         warn: _realConsole.warn.bind(_realConsole),
         error: _realConsole.error.bind(_realConsole)
     };
 
     // Single source of truth for the version; keep in sync with @version.
-    const SCRIPT_VERSION = '6.1.0';
+    const SCRIPT_VERSION = '6.1.1';
 
     // ENVIRONMENT DETECTION & PROFILING
 
@@ -246,17 +248,18 @@
         };
     })();
 
-    // Defaults used by the Reset button
+    // Defaults used by the Reset button and at the start of each game session: advanced
+    // filters off. (Reset used to turn them on with USM and CAS at full strength.)
     const DEFAULT_CONFIG = {
         resolution: { width: 3840, height: 2160, pixelRatio: 2, isAuto: true },
         enhancer: { enabled: true, sharpness: 0.45, contrast: 1.08, saturation: 1.05, brightness: 1.02 },
         filters: {
-            enabled: true, preset: 'default',
-            usm: { enabled: true, amount: 0.3, radius: 0.9, threshold: 0.04 },
-            cas: { enabled: true, sharpness: 0.6 },
-            clarity: { enabled: false, amount: 0.3 },
-            denoise: { enabled: false, strength: 0.15 },
-            vibrance: { enabled: false, amount: 0.15 },
+            enabled: false, preset: null, performanceMode: true,
+            usm: { enabled: false, amount: 0.35, radius: 0.9, threshold: 0.04 },
+            cas: { enabled: false, sharpness: 0.45 },
+            clarity: { enabled: false, amount: 0.2 },
+            denoise: { enabled: false, strength: 0.2 },
+            vibrance: { enabled: false, amount: 0.2 },
             gamma: { enabled: false, value: 1.0 },
             exposure: { enabled: false, value: 0 },
             deband: { enabled: false, strength: 0.3 }
@@ -317,102 +320,6 @@
         `${CONFIG.resolution.width}x${CONFIG.resolution.height}`,
         `@ ${Math.round(CONFIG.streaming.maxBitrate / 1000000)}Mbps`
     );
-
-    // STREAM INTERCEPTOR - Force HW decode on the session config (Better xCloud pattern)
-
-    const StreamInterceptor = {
-        originalFetch: null,
-        enabled: false,
-
-        enable() {
-            if (this.enabled) return;
-            this.enabled = true;
-
-            this.originalFetch = window.fetch;
-            const self = this;
-            window.fetch = async function (...args) {
-                const request = args[0];
-                const url = typeof request === 'string' ? request : request?.url;
-
-                // Only intercept Boosteroid API config endpoints, never /streaming (the page URL itself)
-                // Restricted to boosteroid.com hosts: third-party URLs containing /configuration are left alone
-                let isBoosteroidApi = false;
-                if (url && (url.includes('/configuration') || url.includes('/session/config'))) {
-                    try {
-                        const h = new URL(url, location.href).hostname;
-                        isBoosteroidApi = h === 'boosteroid.com' || h.endsWith('.boosteroid.com');
-                    } catch (e) {}
-                }
-                if (isBoosteroidApi) {
-                    try {
-                        const response = await self.originalFetch.apply(window, args);
-
-                        if (response.ok) {
-                            const clonedResponse = response.clone();
-                            try {
-                                const config = await clonedResponse.json();
-
-                                if (config && typeof config === 'object') {
-                                    if (!config.clientStreamingConfigOverrides) {
-                                        config.clientStreamingConfigOverrides = '{}';
-                                    }
-
-                                    let overrides = {};
-                                    try {
-                                        overrides = JSON.parse(config.clientStreamingConfigOverrides);
-                                    } catch (e) {
-                                        overrides = {};
-                                    }
-
-                                    // Hardware decoding hints
-                                    overrides.videoConfiguration = overrides.videoConfiguration || {};
-                                    overrides.videoConfiguration.enableHardwareDecoding = true;
-                                    overrides.videoConfiguration.hardwareDecoderProfile = 'high';
-                                    overrides.videoConfiguration.enableRtcStatsCollection = true;
-
-                                    config.clientStreamingConfigOverrides = JSON.stringify(overrides);
-
-                                    // Rebuild the Response with correct headers
-                                    const newBody = JSON.stringify(config);
-                                    const newHeaders = new Headers(response.headers);
-                                    newHeaders.set('Content-Length', new Blob([newBody]).size.toString());
-                                    newHeaders.set('Content-Type', 'application/json');
-
-                                    console.log('[Optimizer+] [OK] StreamInterceptor: config enriched (HW decode)');
-
-                                    return new Response(newBody, {
-                                        status: response.status,
-                                        statusText: response.statusText,
-                                        headers: newHeaders
-                                    });
-                                }
-                            } catch (parseError) {
-                                // Not JSON — return original response untouched
-                            }
-                        }
-                        return response;
-                    } catch (e) {
-                        console.warn('[Optimizer+] StreamInterceptor fetch error:', e);
-                        return self.originalFetch.apply(window, args);
-                    }
-                }
-
-                return self.originalFetch.apply(window, args);
-            };
-
-            console.log('[Optimizer+] [OK] StreamInterceptor enabled (HW decode + GPU accel)');
-        },
-
-        disable() {
-            if (!this.enabled) return;
-            this.enabled = false;
-            if (this.originalFetch) {
-                window.fetch = this.originalFetch;
-                this.originalFetch = null;
-            }
-            console.log('[Optimizer+] StreamInterceptor disabled');
-        }
-    };
 
     // Security helpers (XSS + prototype pollution hardening)
     const BLOCKED_MERGE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -941,9 +848,6 @@
             console.log('[Optimizer+] Enabling streaming enhancements...');
 
             try {
-                StreamInterceptor.enable();
-                this.cleanupHandlers.push(() => StreamInterceptor.disable());
-
                 StreamMonitor.enable();
                 this.cleanupHandlers.push(() => StreamMonitor.disable());
 
@@ -2657,12 +2561,19 @@
         return out;
     }
 
+    function persistConfig() {
+        Storage.set('config', pickPersisted(CONFIG));
+        console.log('[Optimizer+] Config saved | resolution ' + JSON.stringify(CONFIG.resolution));
+    }
+
     let saveTimeout = null;
+    // A debounced save still pending when the page unloads would be lost
+    window.addEventListener('pagehide', () => { if (saveTimeout) saveConfig(false); });
     function saveConfig(debounced = false) {
         if (debounced) {
             if (saveTimeout) clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
-                Storage.set('config', pickPersisted(CONFIG));
+                persistConfig();
                 saveTimeout = null;
             }, 1000);
         } else {
@@ -2670,7 +2581,7 @@
                 clearTimeout(saveTimeout);
                 saveTimeout = null;
             }
-            Storage.set('config', pickPersisted(CONFIG));
+            persistConfig();
         }
     }
 
@@ -2686,28 +2597,12 @@
     const isNewSession = currentSessionId && currentSessionId !== savedSessionId;
 
     const savedConfig = Storage.get('config', null);
+    console.log('[Optimizer+] Saved resolution at startup: ' + JSON.stringify(savedConfig && savedConfig.resolution) + ' | new session: ' + !!isNewSession);
     if (savedConfig) {
         if (isNewSession) {
             console.log('[Optimizer+] Nouvelle session d\u00E9tect\u00E9e, reset des presets');
-            savedConfig.filters = {
-                enabled: false,
-                preset: null,
-                usm: { enabled: false, amount: 0.35, radius: 0.9, threshold: 0.04 },
-                cas: { enabled: false, sharpness: 0.45 },
-                clarity: { enabled: false, amount: 0.2 },
-                denoise: { enabled: false, strength: 0.2 },
-                vibrance: { enabled: false, amount: 0.2 },
-                gamma: { enabled: false, value: 1.0 },
-                exposure: { enabled: false, value: 0 },
-                deband: { enabled: false, strength: 0.3 }
-            };
-            savedConfig.enhancer = {
-                enabled: true,
-                sharpness: 0.45,
-                contrast: 1.08,
-                saturation: 1.05,
-                brightness: 1.02
-            };
+            savedConfig.filters = JSON.parse(JSON.stringify(DEFAULT_CONFIG.filters));
+            savedConfig.enhancer = { ...DEFAULT_CONFIG.enhancer };
             Storage.set('lastSessionId', currentSessionId);
         }
         // Deep merge so saved configs do not wipe newly added default keys
@@ -2794,16 +2689,19 @@
             return;
         }
 
-        // Manual mode: honour the chosen resolution (even above native) and scale
-        // pixelRatio so mouse coordinates stay aligned
+        // Manual mode reports what a real HiDPI display reports: the screen keeps its CSS
+        // width and devicePixelRatio carries the scale. Boosteroid requests
+        // screen x devicePixelRatio, so this gives exactly the chosen size. Spoofing
+        // screen.width as well made it request the size times the ratio: 4K asked for 8K,
+        // and 2560x1440 came back as 3200x1800.
         const width = CONFIG.resolution.width;
         const height = CONFIG.resolution.height;
-        const pixelRatio = Math.max(1, Math.round((width / _realScreen.width) * 10) / 10);
+        const pixelRatio = width / _realScreen.width;
+        // Rounded up: the server snaps a size it does not know down to the next one
+        const cssHeight = Math.ceil(height / pixelRatio - 1e-6);
 
         try {
-            // Redefine only the dimensions on the real Screen object so orientation, lock()
-            // and identity stay intact
-            const spoofedDims = { width, height, availWidth: width, availHeight: height };
+            const spoofedDims = { width: _realScreen.width, height: cssHeight, availWidth: _realScreen.width, availHeight: cssHeight };
             for (const [prop, value] of Object.entries(spoofedDims)) {
                 try {
                     Object.defineProperty(window.screen, prop, { get: () => value, configurable: true });
@@ -2815,11 +2713,9 @@
                 configurable: true
             });
 
-            // innerWidth/innerHeight are not hooked: doing so breaks mouse events
-
-            console.log(`[Optimizer+] Résolution forcée: ${width}x${height} @${pixelRatio}x (cappée à natif ${_realScreen.width}x${_realScreen.height})`);
+            console.log(`[Optimizer+] Manual resolution ${width}x${height}: screen ${_realScreen.width}x${cssHeight} @${+pixelRatio.toFixed(4)}x`);
         } catch (e) {
-            console.error('[Optimizer+] Erreur hook résolution:', e);
+            console.error('[Optimizer+] Resolution hook error:', e);
         }
     }
 
@@ -2988,22 +2884,54 @@
 
     // Dev build diagnostics: open F12 and copy. Every 5 s for the first 30 s, then once a
     // minute, plus whenever the stream changes or degrades.
-    const report = _realConsole.log.bind(_realConsole);
+    const report = (...a) => _realConsole.log(`[+${(performance.now() / 1000).toFixed(1)}s]`, ...a);
     let siteDelay = null;
 
     // Dev report only: highest requestAnimationFrame rate seen over one second = display refresh rate
     let displayHz = 0;
+    let samplingHz = false;
     function sampleDisplayHz() {
-        if (document.visibilityState !== 'visible') return;
+        if (samplingHz || document.visibilityState !== 'visible') return;
+        samplingHz = true;
         let frames = 0;
-        const start = performance.now();
-        const tick = (now) => {
-            if (now - start < 1000) { frames++; requestAnimationFrame(tick); } else displayHz = Math.max(displayHz, frames);
-        };
+        const tick = () => { if (samplingHz) { frames++; requestAnimationFrame(tick); } };
         requestAnimationFrame(tick);
+        setTimeout(() => {
+            samplingHz = false;
+            displayHz = Math.max(displayHz, frames);
+            if (!frames) report('[Optimizer+] [Dev] requestAnimationFrame did not fire for 1 s on the main thread');
+        }, 1000);
+    }
+
+    // Dev report only: how the picture reaches the screen, printed whenever it changes.
+    // "shown" is the canvas size on screen in device pixels; when it differs from "buffer"
+    // the browser rescales the finished image.
+    let lastGeometry = '';
+    function reportGeometry() {
+        const video = document.querySelector('video');
+        const canvas = document.getElementById('optimizer-webgpu-canvas') || document.getElementById('optimizer-webgl-canvas');
+        if (!video) return;
+        const dpr = _realDprDescriptor && _realDprDescriptor.get ? _realDprDescriptor.get.call(window) : _realScreen.pixelRatio;
+        const box = (el) => { const r = el.getBoundingClientRect(); return `${+(r.width * dpr).toFixed(1)}x${+(r.height * dpr).toFixed(1)}`; };
+        const style = (el) => { const s = getComputedStyle(el); return `fit ${s.objectFit}${s.transform !== 'none' ? ' transform ' + s.transform : ''}${s.display === 'none' ? ' hidden' : ''}`; };
+        const transformed = [];
+        for (let el = (canvas || video).parentElement, i = 0; el && i < 8; el = el.parentElement, i++) {
+            const tf = getComputedStyle(el).transform;
+            if (tf !== 'none') transformed.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''} ${tf}`);
+        }
+        const f = CONFIG.filters, e = CONFIG.enhancer;
+        const line = `stream ${video.videoWidth}x${video.videoHeight} | video shown ${box(video)} ${style(video)}` +
+            (canvas ? ` | canvas buffer ${canvas.width}x${canvas.height} shown ${box(canvas)} ${style(canvas)}` : ' | no canvas') +
+            ` | window ${Math.round(innerWidth * dpr)}x${Math.round(innerHeight * dpr)} dpr ${+dpr.toFixed(3)} (page sees ${+window.devicePixelRatio.toFixed(3)})` +
+            ` | fullscreen ${document.fullscreenElement ? 'yes' : 'no'}${transformed.length ? ' | transformed parents: ' + transformed.join('; ') : ''}` +
+            ` | sharpness ${e.sharpness} filters ${f.enabled ? 'on' : 'off'} preset ${f.preset} perf ${f.performanceMode ? 'on' : 'off'} stretch ${CONFIG.display.stretchMode ? 'on' : 'off'}`;
+        if (line === lastGeometry) return;
+        lastGeometry = line;
+        report('[Optimizer+] [Render] ' + line);
     }
 
     function reportStreamStats(pc) {
+        if (DEV_BUILD) { try { reportGeometry(); } catch (e) { report('[Optimizer+] [Render] ' + e.message); } }
         pc.getStats().then((stats) => {
             let rtt = '?', v = null;
             stats.forEach((s) => {
@@ -3026,7 +2954,9 @@
             pc._optSlowDecode = decodeMs > 1000 / Math.max(v.framesPerSecond || 60, 30) ? (pc._optSlowDecode || 0) + 1 : 0;
             if (pc._optSlowDecode === 3) showNotification(t('decoderOverloadNotif'));
 
-            if (DEV_BUILD && n <= 3) sampleDisplayHz();
+            if (DEV_BUILD && (!displayHz || n <= 3)) sampleDisplayHz();
+            // Asked on every tick, so a printed render sample is 5 s of frames, 5 s old at most
+            const render = DEV_BUILD ? videoEnhancer.describe() : '';
 
             if (!DEV_BUILD || (n > 6 && n % 12 !== 0 && !changed && !degraded)) return;
 
@@ -3047,7 +2977,7 @@
                 ` | freezes +${d('freezeCount')}${v.qpSum !== undefined && decoded > 0 ? ` | qp ${Math.round(d('qpSum') / decoded)}` : ''}` +
                 ` | jitterBuf ${emitted > 0 ? Math.round(d('jitterBufferDelay') / emitted * 1000) : '?'}ms${siteDelay ? ` (site asked ${siteDelay})` : ''}` +
                 ` | rtt ${rtt}ms | display ${displayHz || '?'}Hz` +
-                ` | ${videoEnhancer.describe()}`);
+                ` | ${render}`);
         }).catch(() => {});
     }
 
@@ -3517,14 +3447,25 @@ struct Uniforms {
     time: f32,
     qualityMode: f32,
     performanceMode: f32,
-    _p0: f32,
-    _p1: f32,
-    _p2: f32,
+    tapX: f32,
+    tapY: f32,
+    cropX: f32,
+    cropY: f32,
+    maxX: f32,
+    maxY: f32,
+    offX: f32,
+    offY: f32,
 };
 
 @group(0) @binding(0) var videoSampler: sampler;
 @group(0) @binding(1) var videoTexture: texture_external;
 @group(0) @binding(2) var<uniform> u: Uniforms;
+
+// Every read of the video. The clamp keeps the taps off the padding rows that follow the
+// picture in some stream sizes.
+fn vtex(uv: vec2f) -> vec4f {
+    return textureSampleBaseClampToEdge(videoTexture, videoSampler, min(uv, vec2f(u.maxX, u.maxY)));
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -3543,7 +3484,9 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     );
     var out: VertexOutput;
     out.position = vec4f(pos[vi], 0.0, 1.0);
-    out.texCoord = uv[vi];
+    // The part of the video texture this pass shows: the picture without its padding
+    // rows, or a window of it when it is cropped rather than scaled
+    out.texCoord = vec2f(u.offX, u.offY) + uv[vi] * vec2f(u.cropX, u.cropY);
     return out;
 }
 
@@ -3567,20 +3510,20 @@ fn toGamma(c: vec3f) -> vec3f { return pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2))
 // CAS (AMD FidelityFX). 5 taps; 9 taps when qualityMode = 1.
 fn sharpen(uv: vec2f, res: vec2f, amount: f32) -> vec3f {
     let px = vec2f(1.0) / res;
-    let b = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, -px.y)).rgb;
-    let d = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-px.x, 0.0)).rgb;
-    let e = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv).rgb;
-    let f = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(px.x, 0.0)).rgb;
-    let h = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, px.y)).rgb;
+    let b = vtex(uv + vec2f(0.0, -px.y)).rgb;
+    let d = vtex(uv + vec2f(-px.x, 0.0)).rgb;
+    let e = vtex(uv).rgb;
+    let f = vtex(uv + vec2f(px.x, 0.0)).rgb;
+    let h = vtex(uv + vec2f(0.0, px.y)).rgb;
 
     var mnRGB = min(min(min(d, e), min(f, b)), h);
     var mxRGB = max(max(max(d, e), max(f, b)), h);
 
     if (u.qualityMode > 0.5) {
-        let a = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-px.x, -px.y)).rgb;
-        let c = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(px.x, -px.y)).rgb;
-        let g = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-px.x, px.y)).rgb;
-        let i = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(px.x, px.y)).rgb;
+        let a = vtex(uv + vec2f(-px.x, -px.y)).rgb;
+        let c = vtex(uv + vec2f(px.x, -px.y)).rgb;
+        let g = vtex(uv + vec2f(-px.x, px.y)).rgb;
+        let i = vtex(uv + vec2f(px.x, px.y)).rgb;
         mnRGB = min(mnRGB, min(min(a, c), min(g, i)));
         mxRGB = max(mxRGB, max(max(a, c), max(g, i)));
     }
@@ -3596,12 +3539,12 @@ fn sharpen(uv: vec2f, res: vec2f, amount: f32) -> vec3f {
 
 fn fastDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
     let px = vec2f(1.0) / res;
-    let center = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv).rgb;
+    let center = vtex(uv).rgb;
     
-    let left = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-1.0, 0.0) * px).rgb;
-    let right = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(1.0, 0.0) * px).rgb;
-    let top = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, -1.0) * px).rgb;
-    let bottom = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, 1.0) * px).rgb;
+    let left = vtex(uv + vec2f(-1.0, 0.0) * px).rgb;
+    let right = vtex(uv + vec2f(1.0, 0.0) * px).rgb;
+    let top = vtex(uv + vec2f(0.0, -1.0) * px).rgb;
+    let bottom = vtex(uv + vec2f(0.0, 1.0) * px).rgb;
     
     let denoised = (center * 0.4 + left * 0.15 + right * 0.15 + top * 0.15 + bottom * 0.15);
     return mix(center, denoised, strength * 0.8);
@@ -3609,7 +3552,7 @@ fn fastDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
 
 fn bilateralDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
     let px = vec2f(1.0) / res;
-    let center = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv).rgb;
+    let center = vtex(uv).rgb;
     
     var sum = center;
     var wSum = 1.0;
@@ -3625,7 +3568,7 @@ fn bilateralDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
     );
     
     for (var i = 0; i < 8; i++) {
-        let s = textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + offsets[i] * px).rgb;
+        let s = vtex(uv + offsets[i] * px).rgb;
         let lS = dot(s, vec3f(0.299, 0.587, 0.114));
         let lumDist = abs(lS - lCenter);
         let colorDist = length(s - center);
@@ -3642,14 +3585,14 @@ fn bilateralDenoise(uv: vec2f, res: vec2f, strength: f32) -> vec3f {
 fn clarityPass(uv: vec2f, res: vec2f, amount: f32, centerColor: vec3f) -> vec3f {
     let px = vec2f(1.0) / res;
     var blur = centerColor;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-2.0, -2.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(2.0, -2.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-2.0, 2.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(2.0, 2.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, -2.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(0.0, 2.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(-2.0, 0.0) * px).rgb;
-    blur += textureSampleBaseClampToEdge(videoTexture, videoSampler, uv + vec2f(2.0, 0.0) * px).rgb;
+    blur += vtex(uv + vec2f(-2.0, -2.0) * px).rgb;
+    blur += vtex(uv + vec2f(2.0, -2.0) * px).rgb;
+    blur += vtex(uv + vec2f(-2.0, 2.0) * px).rgb;
+    blur += vtex(uv + vec2f(2.0, 2.0) * px).rgb;
+    blur += vtex(uv + vec2f(0.0, -2.0) * px).rgb;
+    blur += vtex(uv + vec2f(0.0, 2.0) * px).rgb;
+    blur += vtex(uv + vec2f(-2.0, 0.0) * px).rgb;
+    blur += vtex(uv + vec2f(2.0, 0.0) * px).rgb;
     blur /= 9.0;
 
     let highpass = centerColor - blur;
@@ -3657,17 +3600,24 @@ fn clarityPass(uv: vec2f, res: vec2f, amount: f32, centerColor: vec3f) -> vec3f 
     return clamp(result, vec3f(0.0), vec3f(1.0));
 }
 
+// Stream larger than the canvas: resample it to the canvas size first. Four taps, spread
+// over the source pixels behind one canvas pixel.
+@fragment
+fn fs_down(input: VertexOutput) -> @location(0) vec4f {
+    let o = vec2f(u.tapX, u.tapY);
+    let c = (vtex(input.texCoord + vec2f(-o.x, -o.y)).rgb
+        + vtex(input.texCoord + vec2f(o.x, -o.y)).rgb
+        + vtex(input.texCoord + vec2f(-o.x, o.y)).rgb
+        + vtex(input.texCoord + vec2f(o.x, o.y)).rgb) * 0.25;
+    return vec4f(c, 1.0);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4f {
-    var color = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord).rgb;
-    // Stream larger than the canvas: four taps cover the footprint a single one would skip
-    if (u.upscale < -0.5) {
-        let o = vec2f(0.25) / u.resolution;
-        color = (textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(-o.x, -o.y)).rgb
-            + textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(o.x, -o.y)).rgb
-            + textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(-o.x, o.y)).rgb
-            + textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(o.x, o.y)).rgb) * 0.25;
-    }
+    // Size of the video texture in output pixels: one step of 1 / res is one of its pixels,
+    // also when only part of it is shown
+    let res = u.resolution / vec2f(u.cropX, u.cropY);
+    var color = vtex(input.texCoord).rgb;
 
     if (u.enhancerEnabled < 0.5 && u.filtersEnabled < 0.5) {
         return vec4f(color, 1.0);
@@ -3676,18 +3626,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
     if (u.filtersEnabled > 0.5) {
         if (u.denoise > 0.01) {
             if (u.performanceMode > 0.5) {
-                color = fastDenoise(input.texCoord, u.resolution, u.denoise);
+                color = fastDenoise(input.texCoord, res, u.denoise);
             } else {
-                color = bilateralDenoise(input.texCoord, u.resolution, u.denoise);
+                color = bilateralDenoise(input.texCoord, res, u.denoise);
             }
         }
         if (u.clarity > 0.01 && u.performanceMode < 0.5) {
-            color = clarityPass(input.texCoord, u.resolution, u.clarity, color);
+            color = clarityPass(input.texCoord, res, u.clarity, color);
         }
     }
     // Sharpen: always applied additively (CAS on current pixel vs neighbors)
     if ((u.filtersEnabled > 0.5 || u.enhancerEnabled > 0.5) && u.sharpness > 0.01 && u.upscale < 0.5) {
-        let sharp = sharpen(input.texCoord, u.resolution, u.sharpness);
+        let sharp = sharpen(input.texCoord, res, u.sharpness);
         color = mix(color, sharp, u.sharpness);
     }
 
@@ -3721,17 +3671,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
 
     // Deband: smooth flat areas only (the banding), plus a stable ~1 LSB dither.
     if (u.filtersEnabled > 0.5 && u.deband > 0.01) {
-        let dpx = vec2f(1.0) / u.resolution;
-        let n1 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(2.0 * dpx.x, 0.0)).rgb;
-        let n2 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(-2.0 * dpx.x, 0.0)).rgb;
-        let n3 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(0.0, 2.0 * dpx.y)).rgb;
-        let n4 = textureSampleBaseClampToEdge(videoTexture, videoSampler, input.texCoord + vec2f(0.0, -2.0 * dpx.y)).rgb;
+        let dpx = vec2f(1.0) / res;
+        let n1 = vtex(input.texCoord + vec2f(2.0 * dpx.x, 0.0)).rgb;
+        let n2 = vtex(input.texCoord + vec2f(-2.0 * dpx.x, 0.0)).rgb;
+        let n3 = vtex(input.texCoord + vec2f(0.0, 2.0 * dpx.y)).rgb;
+        let n4 = vtex(input.texCoord + vec2f(0.0, -2.0 * dpx.y)).rgb;
         let avg = (n1 + n2 + n3 + n4) * 0.25;
         let dd = abs(color - avg);
         let md = max(dd.r, max(dd.g, dd.b));
         let flat = 1.0 - smoothstep(0.0, 0.025, md);
         color = mix(color, avg, flat * u.deband);
-        let dither = fract(sin(dot(input.texCoord * u.resolution, vec2f(12.9898, 78.233))) * 43758.5453) - 0.5;
+        let dither = fract(sin(dot(input.texCoord * res, vec2f(12.9898, 78.233))) * 43758.5453) - 0.5;
         color += vec3f(dither * u.deband * 0.012);
     }
 
@@ -4436,12 +4386,26 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
             ],
         });
         const filterLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+        // Same filter shader reading an ordinary texture: the downscaled frame
+        // (no padding, no crop: it is already the picture at canvas size)
+        const flatModule = device.createShaderModule({
+            code: code.replace('texture_external', 'texture_2d<f32>').replace('min(uv, vec2f(u.maxX, u.maxY))', 'uv')
+                .replaceAll('vec2f(u.cropX, u.cropY)', 'vec2f(1.0)').replace('vec2f(u.offX, u.offY)', 'vec2f(0.0)'),
+        });
+        const flatLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+            ],
+        });
         const pipeline = (mod, entryPoint, target, pipelineLayout) => device.createRenderPipeline({
             layout: pipelineLayout,
             vertex: { module: mod, entryPoint: 'vs_main' },
             fragment: { module: mod, entryPoint, targets: [{ format: target }] },
             primitive: { topology: 'triangle-list' },
         });
+        const flatPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [flatLayout] });
         const timed = device.features.has('timestamp-query');
         return {
             querySet: timed ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null,
@@ -4451,6 +4415,15 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
             sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
             pipeline: pipeline(module, 'fs_main', format, filterLayout),
             midPipeline: pipeline(module, 'fs_main', 'rgb10a2unorm', filterLayout),
+            downPipeline: pipeline(module, 'fs_down', 'rgb10a2unorm', filterLayout),
+            flatPipeline: pipeline(flatModule, 'fs_main', format, flatPipelineLayout),
+            flatLayout,
+            down: null, downView: null, flatGroup: null,
+            // Copy path: the frame is first copied to an ordinary texture (see gpuCheckImport)
+            flatMidPipeline: pipeline(flatModule, 'fs_main', 'rgb10a2unorm', flatPipelineLayout),
+            flatDownPipeline: pipeline(flatModule, 'fs_down', 'rgb10a2unorm', flatPipelineLayout),
+            checkPipeline: pipeline(module, 'fs_down', 'rgba8unorm', filterLayout),
+            src: null, srcGroup: null,
             easuPipeline: pipeline(upscaleModule, 'fs_easu', 'rgb10a2unorm', 'auto'),
             rcasPipeline: pipeline(upscaleModule, 'fs_rcas', format, 'auto'),
             uniformBuffer: device.createBuffer({ size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
@@ -4468,46 +4441,173 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         let sx = Math.min(boxW / srcW, 4096 / srcW), sy = Math.min(boxH / srcH, 4096 / srcH);
         if (!fill) sx = sy = Math.min(sx, sy);
         const up = Math.max(sx, sy) > 1.02;
-        if (up ? !allowUp : Math.min(sx, sy) > 0.98) return [srcW, srcH];
-        return [Math.round(srcW * sx), Math.round(srcH * sy)];
+        if (up && !allowUp) return [srcW, srcH];
+        // Within 2% of the box: no scaling. The canvas takes the part of the frame that
+        // fits, so the 1920x1082 Boosteroid sends for a 1080-line screen is shown pixel for
+        // pixel instead of being squeezed by two lines.
+        if (!up && Math.min(sx, sy) > 0.98) return [Math.min(srcW, boxW), Math.min(srcH, boxH)];
+        // The canvas is centred in its box: an odd leftover would put it on a half pixel
+        // and the browser would blur the whole image to draw it there.
+        const fit = (size, box) => {
+            const t = Math.round(size);
+            return t < box && (box - t) % 2 ? t + (t < size ? 1 : -1) : t;
+        };
+        return [fit(srcW * sx, boxW), fit(srcH * sy, boxH)];
     }
 
-    // source: HTMLVideoElement or VideoFrame (srcW x srcH). One pass when the canvas is the
-    // source size or smaller; filter -> EASU -> RCAS when it is larger. Owns uniform slots
-    // 0, 1 (the resolution the filter pass works at) and 14.
-    function gpuDrawFrame(device, context, g, source, srcW, srcH, uniforms) {
-        const target = context.getCurrentTexture();
-        const upscale = target.width > srcW || target.height > srcH;
-        const resW = upscale ? srcW : target.width, resH = upscale ? srcH : target.height;
-        // Slot 14: 1 = upscaling (RCAS sharpens), -1 = minifying (box taps), 0 = 1:1
-        const mode = upscale ? 1 : (target.width < srcW * 0.75 ? -1 : 0);
-        if (g.dirty || uniforms[0] !== resW || uniforms[1] !== resH || uniforms[14] !== mode) {
-            uniforms[0] = resW;
-            uniforms[1] = resH;
-            uniforms[14] = mode;
-            device.queue.writeBuffer(g.uniformBuffer, 0, uniforms);
-            g.dirty = false;
+    // Boosteroid sends some sizes with two extra rows below the picture (1920x1082 for 1080
+    // lines, 3200x1802 for 1800). They hold no image and decode as a green band. known: the
+    // sizes the server streams, as a Set of 'WxH'. Returns the size of the real picture,
+    // which starts at the top left of the frame.
+    function gpuVisibleSize(w, h, known) {
+        if (known.has(w + 'x' + h)) return [w, h];
+        for (const [dw, dh] of [[0, 2], [2, 0], [2, 2]]) {
+            if (known.has((w - dw) + 'x' + (h - dh))) return [w - dw, h - dh];
         }
-        // An external texture expires after use: this bind group is rebuilt every frame
-        const bindGroup = device.createBindGroup({
+        return [w, h];
+    }
+
+    // Chrome hands some video frames to WebGPU with the colour plane out of place: on the
+    // 1920x1082 Boosteroid stream, importExternalTexture returns colours 12 rows too low and
+    // a green band at the top, while the video element and a 2D canvas show the same frame
+    // correctly. This draws a 64x32 strip from the top of the frame both ways and returns
+    // their mean difference per channel (0 to 255): about 1 when the import is right.
+    async function gpuCheckImport(device, g, frame, srcW, srcH) {
+        const W = 64, H = 32, x0 = Math.max(0, (srcW >> 1) - 32);
+        const ref = new OffscreenCanvas(W, H).getContext('2d', { willReadFrequently: true });
+        ref.drawImage(frame, x0, 0, W, H, 0, 0, W, H);
+        const a = ref.getImageData(0, 0, W, H).data;
+        const u = new Float32Array(28);
+        u[20] = W / srcW; u[21] = H / srcH; u[22] = 1; u[23] = 1; u[24] = x0 / srcW;
+        const uniformBuffer = device.createBuffer({ size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        device.queue.writeBuffer(uniformBuffer, 0, u);
+        const texture = device.createTexture({ size: [W, H], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+        const out = device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        const encoder = device.createCommandEncoder();
+        const pass = encoder.beginRenderPass({
+            colorAttachments: [{ view: texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+        });
+        pass.setPipeline(g.checkPipeline);
+        pass.setBindGroup(0, device.createBindGroup({
             layout: g.layout,
             entries: [
                 { binding: 0, resource: g.sampler },
-                { binding: 1, resource: device.importExternalTexture({ source }) },
-                { binding: 2, resource: { buffer: g.uniformBuffer } },
+                { binding: 1, resource: device.importExternalTexture({ source: frame }) },
+                { binding: 2, resource: { buffer: uniformBuffer } },
             ],
-        });
-        const sized = (texture, w, h) => {
+        }));
+        pass.draw(6);
+        pass.end();
+        encoder.copyTextureToBuffer({ texture }, { buffer: out, bytesPerRow: W * 4 }, [W, H]);
+        device.queue.submit([encoder.finish()]);
+        await out.mapAsync(GPUMapMode.READ);
+        const b = new Uint8Array(out.getMappedRange());
+        let sum = 0;
+        for (let i = 0; i < a.length; i += 4) sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+        out.unmap();
+        texture.destroy();
+        uniformBuffer.destroy();
+        out.destroy();
+        return sum / (W * H * 3);
+    }
+
+    // source: HTMLVideoElement or VideoFrame (srcW x srcH). The filters always read an image
+    // at the size they output, so they look the same at every stream resolution:
+    //   canvas = source: filter.   canvas larger: filter -> EASU -> RCAS.
+    //   canvas smaller: downscale -> filter.
+    //   canvas within 2% of the source: filter, cropped to the canvas (no scaling at all).
+    // visW x visH: the picture inside the frame (see gpuVisibleSize); sizes are compared to it.
+    // copy: read the frame through copyExternalImageToTexture instead of importing it (see
+    // gpuCheckImport). One more GPU copy per frame, and the passes read an ordinary texture.
+    // Owns uniform slots 0, 1 (the resolution the filter pass works at), 14 and 18 to 25.
+    function gpuDrawFrame(device, context, g, source, srcW, srcH, uniforms, visW = srcW, visH = srcH, copy = false) {
+        const target = context.getCurrentTexture();
+        const near = Math.abs(target.width - visW) <= visW * 0.02 && Math.abs(target.height - visH) <= visH * 0.02;
+        const upscale = !near && (target.width > visW || target.height > visH);
+        const minify = !near && !upscale && (target.width < visW || target.height < visH);
+        const resW = upscale ? visW : target.width, resH = upscale ? visH : target.height;
+        // The part of the texture shown, in UV: the whole picture, or when it is cropped
+        // rather than scaled, a canvas-sized window in its middle. Slots 20, 21: its size.
+        // Slots 24, 25: its top left corner. Slots 22, 23: the last picture pixel, which
+        // no tap may pass.
+        const shownW = near ? Math.min(visW, target.width) : visW, shownH = near ? Math.min(visH, target.height) : visH;
+        const cropX = Math.fround(shownW / srcW), cropY = Math.fround(shownH / srcH);
+        const offX = Math.fround((visW - shownW) / 2 / srcW), offY = Math.fround((visH - shownH) / 2 / srcH);
+        const maxX = Math.fround((visW - 0.5) / srcW), maxY = Math.fround((visH - 0.5) / srcH);
+        g.path = upscale ? 'upscale' : minify ? 'downscale' : (shownW < visW || shownH < visH ? 'crop' : 'direct');
+        if (visW !== srcW || visH !== srcH) g.path += ' -pad';
+        if (copy) g.path += ' copy';
+        // Slot 14: 1 = upscaling (RCAS sharpens). Slots 18, 19: tap offset of the downscale
+        // pass in UV. In source pixels: ratio - 1 up to 0.5, which removes one-pixel
+        // patterns (moire) from a ratio of 1.5, then a quarter of the ratio past 2. Wider
+        // would remove them at every ratio but blur: at 1.33 it keeps 44% of the finest
+        // detail instead of 60%.
+        const mode = upscale ? 1 : 0;
+        const tap = (vis, dst, src) => {
+            if (!minify || dst >= vis) return 0;
+            const r = vis / dst;
+            return Math.fround((r < 2 ? Math.min(0.5, r - 1) : r / 4) / src);
+        };
+        // The copied texture holds only the shown part, so its width is the picture's
+        const tapX = tap(visW, target.width, copy ? shownW : srcW), tapY = tap(visH, target.height, copy ? shownH : srcH);
+        if (g.dirty || uniforms[0] !== resW || uniforms[1] !== resH || uniforms[14] !== mode || uniforms[18] !== tapX || uniforms[19] !== tapY ||
+            uniforms[20] !== cropX || uniforms[21] !== cropY || uniforms[22] !== maxX || uniforms[23] !== maxY ||
+            uniforms[24] !== offX || uniforms[25] !== offY) {
+            uniforms[0] = resW;
+            uniforms[1] = resH;
+            uniforms[14] = mode;
+            uniforms[18] = tapX;
+            uniforms[19] = tapY;
+            uniforms[20] = cropX;
+            uniforms[21] = cropY;
+            uniforms[22] = maxX;
+            uniforms[23] = maxY;
+            uniforms[24] = offX;
+            uniforms[25] = offY;
+            device.queue.writeBuffer(g.uniformBuffer, 0, uniforms);
+            g.dirty = false;
+        }
+        const sized = (texture, w, h, format = 'rgb10a2unorm', usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING) => {
             if (texture && texture.width === w && texture.height === h) return texture;
             if (texture) texture.destroy();
-            return device.createTexture({
-                size: [w, h],
-                format: 'rgb10a2unorm',
-                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-            });
+            return device.createTexture({ size: [w, h], format, usage });
         };
+        let bindGroup;
+        if (copy) {
+            const src = sized(g.src, shownW, shownH, 'rgba8unorm', GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING);
+            if (src !== g.src) {
+                g.src = src;
+                g.srcGroup = device.createBindGroup({
+                    layout: g.flatLayout,
+                    entries: [
+                        { binding: 0, resource: g.sampler },
+                        { binding: 1, resource: src.createView() },
+                        { binding: 2, resource: { buffer: g.uniformBuffer } },
+                    ],
+                });
+            }
+            // copyExternalImageToTexture straight from the frame has the same colour offset
+            // (seen in a real session), so the frame goes through a 2D canvas, which the
+            // check found correct, and the canvas is copied.
+            if (!g.c2d || g.c2d.canvas.width !== shownW || g.c2d.canvas.height !== shownH) {
+                g.c2d = new OffscreenCanvas(shownW, shownH).getContext('2d', { alpha: false });
+            }
+            g.c2d.drawImage(source, Math.round((visW - shownW) / 2), Math.round((visH - shownH) / 2), shownW, shownH, 0, 0, shownW, shownH);
+            device.queue.copyExternalImageToTexture({ source: g.c2d.canvas }, { texture: src }, [shownW, shownH]);
+            bindGroup = g.srcGroup;
+        } else {
+            // An external texture expires after use: this bind group is rebuilt every frame
+            bindGroup = device.createBindGroup({
+                layout: g.layout,
+                entries: [
+                    { binding: 0, resource: g.sampler },
+                    { binding: 1, resource: device.importExternalTexture({ source }) },
+                    { binding: 2, resource: { buffer: g.uniformBuffer } },
+                ],
+            });
+        }
         if (upscale) {
-            const mid = sized(g.mid, srcW, srcH);
+            const mid = sized(g.mid, visW, visH);
             if (mid !== g.mid) {
                 g.mid = mid;
                 g.midView = mid.createView();
@@ -4526,6 +4626,21 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 });
             }
         }
+        if (minify) {
+            const down = sized(g.down, target.width, target.height);
+            if (down !== g.down) {
+                g.down = down;
+                g.downView = down.createView();
+                g.flatGroup = device.createBindGroup({
+                    layout: g.flatLayout,
+                    entries: [
+                        { binding: 0, resource: g.sampler },
+                        { binding: 1, resource: g.downView },
+                        { binding: 2, resource: { buffer: g.uniformBuffer } },
+                    ],
+                });
+            }
+        }
         // Every 30th upscaled frame is timed on the GPU itself
         const timed = upscale && g.querySet && ++g.tick % 30 === 0 && g.readBuffer.mapState === 'unmapped';
         const encoder = device.createCommandEncoder();
@@ -4540,11 +4655,14 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
             pass.end();
         };
         if (upscale) {
-            run(g.midView, g.midPipeline, bindGroup, timed ? { querySet: g.querySet, beginningOfPassWriteIndex: 0 } : undefined);
+            run(g.midView, copy ? g.flatMidPipeline : g.midPipeline, bindGroup, timed ? { querySet: g.querySet, beginningOfPassWriteIndex: 0 } : undefined);
             run(g.upView, g.easuPipeline, g.easuGroup);
             run(target.createView(), g.rcasPipeline, g.rcasGroup, timed ? { querySet: g.querySet, endOfPassWriteIndex: 1 } : undefined);
+        } else if (minify) {
+            run(g.downView, copy ? g.flatDownPipeline : g.downPipeline, bindGroup);
+            run(target.createView(), g.flatPipeline, g.flatGroup);
         } else {
-            run(target.createView(), g.pipeline, bindGroup);
+            run(target.createView(), copy ? g.flatPipeline : g.pipeline, bindGroup);
         }
         if (timed) {
             encoder.resolveQuerySet(g.querySet, 0, 2, g.resolveBuffer, 0);
@@ -4605,23 +4723,84 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         try { return localStorage.getItem('optimizer_worker') !== '0'; } catch (e) { return true; }
     })();
 
+    const KNOWN_STREAM_SIZES = new Set(SmartResolutionDetector.SUPPORTED_RESOLUTIONS.map(([w, h]) => w + 'x' + h));
+
     function workerRendererMain() {
         let device, context, gpu, canvas, format;
-        let active = false, generation = 0, frames = 0, maxGap = 0, lastDraw = 0, boxW = 0, boxH = 0, warned = false, statsAt = 0, allowUp = false, fill = false, frameColor = null, frameFormat = null, pending = 0;
+        let active = false, generation = 0, frames = 0, maxGap = 0, lastDraw = 0, boxW = 0, boxH = 0, warned = false, statsAt = 0, allowUp = false, fill = false, frameColor = null, frameFormat = null, pending = 0, hitches = 0;
         const uniforms = new Float32Array(28);
         const fail = (e) => postMessage({ type: 'fail', message: String((e && e.message) || e) });
         const configure = () => context.configure({ device, format, colorSpace: 'srgb', alphaMode: 'opaque' });
 
+        // Dev build only: brightness of the first and last four rows of a frame and how much
+        // each differs from the next one. Shows whether the two extra rows Boosteroid sends
+        // (1082 for 1080) are picture or padding.
+        let dev = false, probedW = 0, probedH = 0, known = new Set();
+        // 'WxH' -> true when importExternalTexture shows that frame size wrong
+        const copySizes = new Map();
+        async function checkImport(f, key) {
+            try {
+                const diff = await gpuCheckImport(device, gpu, f, f.displayWidth, f.displayHeight);
+                copySizes.set(key, diff > 8);
+                const v = f.visibleRect;
+                postMessage({ type: 'import-check', text: `${key} ${f.format} coded ${f.codedWidth}x${f.codedHeight} visible ${v.width}x${v.height}@${v.x},${v.y}: import differs from 2D canvas by ${diff.toFixed(1)} -> ${diff > 8 ? 'copy path' : 'direct import'}` });
+            } catch (e) {
+                postMessage({ type: 'import-check', text: key + ' check failed: ' + e.message });
+            } finally {
+                f.close();
+            }
+        }
+        async function probeEdges(f) {
+            try {
+                const w = f.displayWidth, h = f.displayHeight;
+                if (f.format !== 'NV12' && f.format !== 'I420') { postMessage({ type: 'edges', text: `${w}x${h} format ${f.format}` }); return; }
+                const rows = async (y) => {
+                    const rect = { x: 0, y, width: w, height: 4 };
+                    const buf = new Uint8Array(f.allocationSize({ rect }));
+                    const layout = await f.copyTo(buf, { rect });
+                    const { offset, stride } = layout[0];
+                    const out = [];
+                    for (let r = 0; r < 4; r++) {
+                        let sum = 0, diff = 0;
+                        for (let x = 0; x < w; x++) {
+                            const v = buf[offset + r * stride + x];
+                            sum += v;
+                            if (r < 3) diff += Math.abs(v - buf[offset + (r + 1) * stride + x]);
+                        }
+                        out.push(`${(sum / w).toFixed(0)}${r < 3 ? '~' + (diff / w).toFixed(1) : ''}`);
+                    }
+                    return out.join(' ');
+                };
+                postMessage({ type: 'edges', text: `${w}x${h} top rows ${await rows(0)} | bottom rows ${await rows((h - 4) & ~1)}` });
+            } catch (e) {
+                postMessage({ type: 'edges', text: 'probe failed: ' + e.message });
+            } finally {
+                f.close();
+            }
+        }
+
         function draw(frame) {
             const w = frame.displayWidth, h = frame.displayHeight;
+            const [visW, visH] = gpuVisibleSize(w, h, known);
+            const key = w + 'x' + h;
+            if (!copySizes.has(key)) {
+                // Copy path until the check clears the direct import: no green frame meanwhile
+                copySizes.set(key, true);
+                checkImport(frame.clone(), key);
+            }
+            if (dev && (w !== probedW || h !== probedH)) {
+                probedW = w;
+                probedH = h;
+                probeEdges(frame.clone());
+            }
             const off = gpu.upscaleOff;
-            const [targetW, targetH] = gpuTargetSize(w, h, boxW, boxH, allowUp && !off, fill);
+            const [targetW, targetH] = gpuTargetSize(visW, visH, boxW, boxH, allowUp && !off, fill);
             if (canvas.width !== targetW || canvas.height !== targetH) {
                 canvas.width = targetW;
                 canvas.height = targetH;
                 configure();
             }
-            gpuDrawFrame(device, context, gpu, frame, w, h, uniforms);
+            gpuDrawFrame(device, context, gpu, frame, w, h, uniforms, visW, visH, copySizes.get(key));
             if (frames % 64 === 0) {
                 frameColor = frame.colorSpace;
                 frameFormat = frame.format;
@@ -4645,7 +4824,11 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                             draw(frame);
                             drawn = true;
                             const now = performance.now();
-                            if (lastDraw) maxGap = Math.max(maxGap, now - lastDraw);
+                            if (lastDraw) {
+                                maxGap = Math.max(maxGap, now - lastDraw);
+                                // A frame shown more than 1.6 frame intervals after the previous one
+                                if (now - lastDraw > gpu.interval * 1.6) hitches++;
+                            }
                             lastDraw = now;
                             frames++;
                             errors = 0;
@@ -4675,6 +4858,8 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 if (m.type === 'init') {
                     canvas = m.canvas;
                     allowUp = m.upscale;
+                    dev = m.dev;
+                    known = new Set(m.sizes);
                     const adapter = await navigator.gpu.requestAdapter(m.adapterOptions);
                     if (!adapter) throw new Error('no WebGPU adapter');
                     device = await adapter.requestDevice({ requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [] });
@@ -4697,11 +4882,12 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                     pump(m.readable, ++generation);
                 } else if (m.type === 'stats') {
                     const now = performance.now();
-                    postMessage({ type: 'stats', frames, maxGap, gpuMs: gpu.gpuMs, ms: now - statsAt, upscaleOff: gpu.upscaleOff,
+                    postMessage({ type: 'stats', frames, maxGap, gpuMs: gpu.gpuMs, ms: now - statsAt, upscaleOff: gpu.upscaleOff, path: gpu.path, hitches,
                         color: frameColor ? [frameColor.primaries, frameColor.transfer, frameColor.matrix, frameColor.fullRange ? 'full' : 'limited', frameFormat].join('/') : '?' });
                     statsAt = now;
                     frames = 0;
                     maxGap = 0;
+                    hitches = 0;
                 }
             } catch (e) { fail(e); }
         };
@@ -4742,7 +4928,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 const timer = setTimeout(() => done(false), 4000);
                 try {
                     this.videoElement = videoElement;
-                    const source = `${gpuCreatePipeline}\n${gpuTargetSize}\n${gpuDrawFrame}\n(${workerRendererMain})()`;
+                    const source = `${gpuCreatePipeline}\n${gpuTargetSize}\n${gpuVisibleSize}\n${gpuCheckImport}\n${gpuDrawFrame}\n(${workerRendererMain})()`;
                     this.worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
                     this.worker.onerror = (e) => (settled ? this._fail(e.message) : done(false));
                     this.worker.onmessage = ({ data: m }) => {
@@ -4759,6 +4945,10 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                             this._rebind();
                         } else if (m.type === 'stats') {
                             this._stats = m;
+                        } else if (m.type === 'import-check') {
+                            console.log('[Optimizer+] [Render] ' + m.text);
+                        } else if (m.type === 'edges') {
+                            report('[Optimizer+] [Render] edge rows (brightness~difference to next row): ' + m.text);
                         } else if (m.type === 'upscale-off') {
                             showNotification(t('upscaleOffNotif'));
                         } else if (m.type === 'fail') {
@@ -4789,6 +4979,8 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                         shader: WGSL_SHADER,
                         upscaleShader: WGSL_UPSCALE,
                         upscale: UPSCALE,
+                        dev: DEV_BUILD,
+                        sizes: [...KNOWN_STREAM_SIZES],
                         // Chrome on Windows ignores powerPreference and logs a warning (crbug.com/369219127)
                         adapterOptions: /Win/i.test(navigator.platform) ? {} : { powerPreference: 'high-performance' },
                     }, [offscreen]);
@@ -4825,7 +5017,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
             const s = this._stats;
             if (this.worker) this.worker.postMessage({ type: 'stats' });
             if (!s) return 'starting';
-            return `${Math.round(s.frames * 1000 / s.ms)} fps, max gap ${Math.round(s.maxGap)}ms, gpu ${s.gpuMs.toFixed(1)}ms${s.upscaleOff ? ', upscale stopped' : ''}, color ${s.color}`;
+            return `${Math.round(s.frames * 1000 / s.ms)} fps, max gap ${Math.round(s.maxGap)}ms, late frames ${s.hitches}, gpu ${s.gpuMs.toFixed(1)}ms${s.upscaleOff ? ', upscale stopped' : ''}, path ${s.path}, color ${s.color}`;
         }
 
         _fail(message) {
@@ -5020,7 +5212,8 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
             try {
                 const off = this._gpu.upscaleOff;
-                const [targetW, targetH] = gpuTargetSize(texW, texH, this._boxW, this._boxH, UPSCALE && !off, CONFIG.display.stretchMode);
+                const [visW, visH] = gpuVisibleSize(texW, texH, KNOWN_STREAM_SIZES);
+                const [targetW, targetH] = gpuTargetSize(visW, visH, this._boxW, this._boxH, UPSCALE && !off, CONFIG.display.stretchMode);
                 if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
                     this.canvas.width = targetW;
                     this.canvas.height = targetH;
@@ -5032,7 +5225,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                     });
                 }
 
-                gpuDrawFrame(this.device, this.context, this._gpu, video, texW, texH, this._uniformData);
+                gpuDrawFrame(this.device, this.context, this._gpu, video, texW, texH, this._uniformData, visW, visH);
                 if (off && !this._upscaleWarned) {
                     this._upscaleWarned = true;
                     showNotification(t('upscaleOffNotif'));
@@ -5433,7 +5626,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 block.style.display = 'none';
                 block.style.visibility = 'hidden';
                 block.style.pointerEvents = 'none';
-                console.log('[Optimizer+] Masqu\u00E9: option "Image plus lumineuse" de Boosteroid');
             }
         });
     }
@@ -5505,7 +5697,6 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         if (boosteroidMenu) {
             const style = window.getComputedStyle(boosteroidMenu);
             if (style.display !== 'none' && boosteroidMenu.offsetParent !== null) {
-                console.log('[Optimizer+] Menu Boosteroid trouvé (#menu.menu_desktop)');
                 return boosteroidMenu;
             }
         }
@@ -6291,7 +6482,8 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
 
                 const modeText = isAutoMode ? 'Auto' : '';
                 showNotification(`${modeText} Resolution: ${width}x${height} (${ratioName})`);
-                autoSave();
+                // Saved now, not debounced: users reload right after picking a resolution
+                saveConfig(false);
                 confirmResolution(width, height);
             });
         }
@@ -6401,6 +6593,10 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
                 document.documentElement.classList.remove('optimizer-stretch-mode');
                 const glCanvas = document.getElementById('optimizer-webgpu-canvas') || document.getElementById('optimizer-webgl-canvas');
                 if (glCanvas) glCanvas.style.objectFit = 'contain';
+
+                hookResolution();
+                // Boosteroid re-reads the screen size on resize
+                setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
 
                 localStorage.removeItem('optimizer_config');
                 saveConfig(false);
@@ -7079,6 +7275,79 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         console.log('[Optimizer+] [OK] All widget events attached successfully');
     }
 
+    // Dev build only: shows where the Boosteroid client sends the stream resolution and
+    // which API paths it calls. Prints key names and resolution-like values, never whole
+    // bodies (they can carry tokens).
+    function devCaptureRequests() {
+        const RES = /width|height|resol|screen|\b\d{3,4}\s*[x*]\s*\d{3,4}\b/i;
+        let left = 60;
+        const seenPaths = new Set();
+        const short = (u) => { try { const x = new URL(u, location.href); return x.host + x.pathname; } catch (e) { return '?'; } };
+        const describe = (txt) => {
+            const out = [];
+            const keep = (k, v) => { if (out.length < 12 && RES.test(k + '=' + v)) out.push(`${k}=${String(v).slice(0, 24)}`); };
+            try {
+                const walk = (o, path) => {
+                    if (!o || typeof o !== 'object') return;
+                    for (const [k, v] of Object.entries(o)) {
+                        const p = path ? `${path}.${k}` : k;
+                        if (v && typeof v === 'object') walk(v, p); else keep(p, v);
+                    }
+                };
+                walk(JSON.parse(txt), '');
+            } catch (e) {
+                new URLSearchParams(txt).forEach((v, k) => keep(k, v));
+                if (!out.length) { const m = txt.match(RES); if (m) out.push('raw: ' + txt.slice(m.index, m.index + 40).replace(/\s+/g, ' ')); }
+            }
+            return out.join(' ');
+        };
+        const note = (via, where, body) => {
+            if (left <= 0 || typeof body !== 'string' || body.length > 20000 || !RES.test(body)) return;
+            const d = describe(body);
+            if (d) { left--; report(`[Optimizer+] [Capture] ${via} ${where} | ${d}`); }
+        };
+        const seen = (via, url) => {
+            const p = short(url);
+            if (seenPaths.size < 40 && !seenPaths.has(p) && /boosteroid/i.test(p)) { seenPaths.add(p); report(`[Optimizer+] [Capture] ${via} ${p}`); }
+            try { note(via + ' query', p, new URL(url, location.href).search.slice(1)); } catch (e) {}
+        };
+
+        note('page', location.pathname, location.search.slice(1));
+
+        const origFetch = windowCtx.fetch;
+        windowCtx.fetch = function (input, init) {
+            try {
+                const url = typeof input === 'string' ? input : input && input.url;
+                seen('fetch', url);
+                note('fetch body', short(url), init && init.body);
+            } catch (e) {}
+            return origFetch.apply(this, arguments);
+        };
+
+        const xhrOpen = XMLHttpRequest.prototype.open;
+        const xhrSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (method, url) { this._optUrl = url; return xhrOpen.apply(this, arguments); };
+        XMLHttpRequest.prototype.send = function (body) {
+            try { seen('xhr', this._optUrl); note('xhr body', short(this._optUrl), body); } catch (e) {}
+            return xhrSend.apply(this, arguments);
+        };
+
+        const OrigWS = windowCtx.WebSocket;
+        if (typeof OrigWS === 'function') {
+            windowCtx.WebSocket = new Proxy(OrigWS, {
+                construct(Target, args) {
+                    const ws = new Target(...args);
+                    const send = ws.send.bind(ws);
+                    let n = 0;
+                    report(`[Optimizer+] [Capture] ws open ${short(args[0])}`);
+                    // Only the first messages are inspected: later traffic costs one counter increment
+                    ws.send = (data) => { if (n++ < 40) note('ws send', short(args[0]), data); return send(data); };
+                    return ws;
+                }
+            });
+        }
+    }
+
     // INITIALISATION
 
     function init() {
@@ -7098,9 +7367,7 @@ fn fs_rcas(input: VertexOutput) -> @location(0) vec4f {
         hookBitrate();
         SmartCodecSelector.probe();
 
-        // The fetch interceptor must be installed before Boosteroid's /configuration request,
-        // which can fire at page load
-        StreamInterceptor.enable();
+        if (DEV_BUILD) devCaptureRequests();
 
         console.log(`[Optimizer+] v${SCRIPT_VERSION} \u2014 WebGPU zero-copy mode active`);
 
