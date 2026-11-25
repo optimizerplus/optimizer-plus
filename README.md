@@ -92,7 +92,7 @@ Bugs and ideas: [open an issue](https://github.com/optimizerplus/optimizer-plus/
 
 <div align="center">
 
-MIT © [Derfog](https://github.com/Derfogd) · Not affiliated with Boosteroid
+MIT © [Derfog](https://github.com/Derfogd) · Free for the Boosteroid community · Not an official Boosteroid product
 
 [Website](https://optimizerplus.github.io) · [Boosteroid](https://boosteroid.com/go/b/fA5oF) · [Releases](https://github.com/optimizerplus/optimizer-plus/releases)
 
