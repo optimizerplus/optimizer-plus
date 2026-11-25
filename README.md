@@ -7,8 +7,6 @@
 A free userscript that adds resolution, codec and image controls to the Boosteroid player.
 
 [![Latest release](https://img.shields.io/github/v/release/optimizerplus/optimizer-plus?style=flat-square&label=version&color=0a84ff)](https://github.com/optimizerplus/optimizer-plus/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/optimizerplus/optimizer-plus/total?style=flat-square&color=0a84ff)](https://github.com/optimizerplus/optimizer-plus/releases)
-[![Stars](https://img.shields.io/github/stars/optimizerplus/optimizer-plus?style=flat-square&color=0a84ff)](https://github.com/optimizerplus/optimizer-plus/stargazers)
 [![License](https://img.shields.io/github/license/optimizerplus/optimizer-plus?style=flat-square&color=0a84ff)](LICENSE)
 
 [![Install](https://img.shields.io/badge/Install-Optimizer%20Plus-0a84ff?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/optimizerplus/optimizer-plus/main/Boosteroid-Optimizer-Plus.user.js)
