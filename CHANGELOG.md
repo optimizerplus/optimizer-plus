@@ -6,12 +6,12 @@ Remplace la v6.1.0 publiée le matin du même jour.
 
 ### Correctifs de la v6.1.1
 
-- **Couleurs décalées en 1080p natif (bande verte, image fantôme).** Boosteroid envoie 1920x1082 (et 3200x1802) : deux lignes de remplissage sous l'image. Pour ces hauteurs, Chrome transmet l'image à WebGPU ( comme ) avec la couche couleur décalée de 12 lignes. Le script compare désormais, à chaque nouvelle taille de flux, l'import WebGPU à un canvas 2D ; s'ils diffèrent, l'image passe par le canvas 2D (correct). Chaque nouvelle taille démarre sur ce chemin sûr. Les lignes de remplissage ne sont jamais affichées.
-- **Résolution manuelle exacte.** Le script modifiait à la fois  et  : Boosteroid demandait le double (4K demandait 8K, 2560x1440 arrivait en 3200x1802). Seul  change maintenant, comme sur un vrai écran HiDPI.
+- **Couleurs décalées en 1080p natif (bande verte, image fantôme).** Boosteroid envoie 1920x1082 (et 3200x1802) : deux lignes de remplissage sous l'image. Pour ces hauteurs, Chrome transmet l'image à WebGPU (`importExternalTexture` comme `copyExternalImageToTexture`) avec la couche couleur décalée de 12 lignes. Le script compare désormais, à chaque nouvelle taille de flux, l'import WebGPU à un canvas 2D ; s'ils diffèrent, l'image passe par le canvas 2D (correct). Chaque nouvelle taille démarre sur ce chemin sûr. Les lignes de remplissage ne sont jamais affichées.
+- **Résolution manuelle exacte.** Le script modifiait à la fois `screen.width` et `devicePixelRatio` : Boosteroid demandait le double (4K demandait 8K, 2560x1440 arrivait en 3200x1802). Seul `devicePixelRatio` change maintenant, comme sur un vrai écran HiDPI.
 - **Résolution conservée au rechargement.** Le choix fait dans le menu en jeu est sauvegardé immédiatement (avant : 1 s de délai, perdu si on rechargeait aussitôt).
 - **Reset** remet aussi le flux en résolution native et les réglages d'un début de session (avant : netteté USM + CAS au maximum).
 - **Filtres et changement de résolution.** Quand le flux est plus grand que l'affichage, il est d'abord réduit à la taille de l'affichage, puis filtré : moins de moiré (3200x1800 vers 1080p : 81 -> 0 sur un motif d'une ligne). En taille native, l'image est affichée pixel pour pixel. Le canvas n'est plus placé sur un demi-pixel.
--  supprimé : il ciblait des URL que Boosteroid n'utilise pas.
+- `StreamInterceptor` supprimé : il ciblait des URL que Boosteroid n'utilise pas.
 
 
 ### Qualité d'image
